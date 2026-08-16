@@ -38,12 +38,25 @@ cp .env.example .env
 ├── broker.py            # 토스증권 Open API 클라이언트 (계좌/주문, 기본 드라이런)
 ├── strategy.py          # 점수 -> 매수/매도 판단, 포지션 사이징, 재무 건전성 필터
 ├── run_strategy.py      # strategy.py를 실제 계좌에 대해 실행하는 진입점
+├── rl/                   # 강화학습 기반 포트폴리오 에이전트 (실험적, 9번 참고)
+│   ├── price_data.py    # yfinance 과거 가격 조회 + 기술적 지표 계산
+│   ├── trading_env.py   # PortfolioEnv (gymnasium 커스텀 환경)
+│   ├── train.py         # PPO 학습
+│   ├── backtest.py      # 보류 구간 백테스트 + buy&hold/현금 베이스라인 비교
+│   ├── rl_strategy.py   # 학습된 정책으로 실거래 리밸런싱 (strategy.py와 별개 경로)
+│   ├── daily_run.py     # 매 거래일 자동 드리프트 점검 + 리밸런싱 진입점
+│   ├── daily_log.py     # 실행 기록 누적(daily_run_history.json) + README 자동 갱신
+│   ├── daily_run_history.json  # 일별 실행 기록 누적 데이터 (git 추적)
+│   └── models/           # 학습된 모델(.zip)과 메타데이터(.meta.json) 저장 위치
 ├── tests/
 │   ├── test_data_pipeline.py
 │   ├── test_broker.py
-│   └── test_strategy.py
-├── .cache/               # data_pipeline.py의 종목 리스트 캐시 (git 제외)
-└── output/               # signals_*.csv, universe_analyst_scores_*.csv 생성 위치
+│   ├── test_strategy.py
+│   ├── test_price_data.py
+│   ├── test_trading_env.py
+│   └── test_daily_log.py
+├── .cache/               # data_pipeline.py/rl 가격 데이터 캐시 (git 제외)
+└── output/               # signals_*.csv, universe_analyst_scores_*.csv, rl_backtest_*.csv/png 생성 위치
 ```
 
 ## 3. 실행
@@ -186,11 +199,99 @@ python run_strategy.py
 `strategy.py`의 `_extract_value()`가 후보 키 여러 개를 시도하도록 만들어
 뒀지만, 승인 후 실제 응답을 보고 정리해야 합니다.
 
+## 9. 강화학습 기반 포트폴리오 에이전트 (실험적, rl/)
+
+`strategy.py`의 종목별 고정 임계값 규칙과는 별개로, `WATCHLIST` 종목들에
+비중을 동시에 배분하는 PPO(stable-baselines3) 기반 포트폴리오 에이전트를
+`rl/`에 추가했습니다. `strategy.py`/`run_strategy.py`는 그대로 남아있고
+(수정하지 않음), 둘 중 하나를 선택해서 실행하면 됩니다.
+
+**중요한 한계**: 뉴스(Alpha Vantage)·애널리스트 컨센서스(Finnhub)는 무료
+API로 수년치 일별 히스토리를 구할 수 없습니다. 그래서 이 RL 에이전트의
+state는 **가격 기반 기술적 지표만** 사용합니다(일간수익률, 5/20/60일
+이동평균수익률, 20일 변동성, RSI(14), 거래량 z-score — `rl/price_data.py`).
+`main.py`의 뉴스+애널리스트 `combined_score`는 이 파이프라인에 아직
+반영되지 않습니다.
+
+### 설치
+
+```bash
+pip install -r requirements.txt   # stable-baselines3, gymnasium, yfinance, matplotlib(+torch) 포함, 용량 큼
+```
+
+### 학습
+
+```bash
+python -m rl.train                    # 기본 200,000 timesteps
+python -m rl.train --timesteps 20000  # 빠른 스모크 테스트용
+```
+
+`config.RL_TRAIN_YEARS`(기본 6년)만큼 yfinance에서 일별 가격을 내려받아
+`config.RL_TRAIN_TEST_SPLIT`(기본 80%) 지점까지만 학습하고, 최근 20%는
+보류(holdout) 구간으로 남겨 미래 데이터 누수 없이 백테스트에 사용합니다.
+결과는 `rl/models/ppo_portfolio.zip`(모델)과 `.meta.json`(종목/윈도/분할
+날짜 등 메타데이터)으로 저장됩니다.
+
+### 백테스트
+
+```bash
+python -m rl.backtest
+```
+
+보류 구간에서 학습된 정책을 결정적으로(deterministic) 실행해 동일종목
+동일가중 buy&hold, 전량 현금 보유와 CAGR/연변동성/Sharpe/최대낙폭(MDD)을
+비교합니다. `output/rl_backtest_<날짜>.csv`(자산곡선 데이터)와 `.png`(그래프)를
+저장합니다.
+
+### 실거래 자동화 (daily_run.py)
+
+```bash
+python -m rl.daily_run
+```
+
+매 거래일: 최신 가격으로 ① 보류 구간 백테스트를 다시 돌려 MDD가
+`config.RL_DRIFT_MAX_DRAWDOWN`(기본 35%)을 넘는지 점검(드리프트 감지 시
+주문 없이 종료) → ② 통과하면 `rl_strategy.py`로 오늘자 목표 비중을 계산해
+`broker.create_order()`로 리밸런싱 주문을 냅니다. **자동 재학습은 하지
+않습니다** — 모델이 오래됐다고 판단되면 `python -m rl.train`을 월 1회
+등 별도 주기로 수동 재실행하세요.
+
+`broker.create_order()`의 기존 이중 안전장치(`TOSS_LIVE_TRADING=false`
+기본 드라이런, `confirm=True` 필요)가 `strategy.run()`과 동일하게
+그대로 적용됩니다 — `rl_strategy.py`도 실거래 여부를 직접 판단하지 않습니다.
+
+평일 아침 크론 예시(`main.py`와 동일한 캘린더):
+
+```
+0 8 * * 1-5 cd /path/to/repo && /usr/bin/python3 -m rl.daily_run >> rl_log.txt 2>&1
+```
+
+### 일별 실행 기록 (자동 생성)
+
+`rl/daily_run.py`가 완주할 때마다(드리프트 통과 + 리밸런싱 계산 완료) 그날의
+포트폴리오 가치·전일 대비 수익률·종목별 목표 비중을 `rl/daily_run_history.json`에
+누적 기록하고, 아래 표/그래프 구간을 자동으로 재생성합니다(수동 편집 불필요 —
+다음 실행 때 덮어써집니다). 그라운딩 회귀 스크립트의 히스토리 기록 패턴과
+동일한 방식입니다.
+
+<!-- RL_DAILY_LOG_START -->
+_아직 기록된 실행이 없습니다. `python -m rl.daily_run`을 실행하면 자동으로 채워집니다._
+<!-- RL_DAILY_LOG_END -->
+
+### 향후 확장
+
+- LLM 기반 뉴스/공시 리서치 신호를 RL state에 추가 피처로 결합 (현재는
+  가격 기술적 지표만 사용). 참고: [LinqAlpha 리더보드](https://linqalpha.com/leaderboard)는
+  금융 판단에서 LLM의 섹터/시가총액/모멘텀 편향성을 측정하는 벤치마크로,
+  도입 시 편향 낮은 모델을 우선 검토할 것.
+- 다중 자산군 확장(현재는 `WATCHLIST` 5종목 + 현금)
+- 거래비용/슬리피지 가정을 더 정교하게 반영
+
 ## 다음 단계
 
-- 백테스팅 엔진: 과거 시그널·가격 데이터로 전략 수익률 검증
 - `BUY_THRESHOLD`/`SELL_THRESHOLD` 재보정 (상위 N% 방식 등)
-- 토스증권 API 승인 후 `broker.py`/`strategy.py` 실제 계좌로 검증
+- 토스증권 API 승인 후 `broker.py`/`strategy.py`/`rl_strategy.py` 실제 계좌로 검증
+- RL 에이전트 하이퍼파라미터(윈도, 에피소드 길이, 거래비용 가정) 튜닝
 
 ## 참고 (중요)
 
