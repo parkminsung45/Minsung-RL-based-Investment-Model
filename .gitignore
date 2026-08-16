@@ -1,6 +1,10 @@
 .env
 output/*.csv
+output/*.png
 .cache/
 __pycache__/
 *.pyc
 .pytest_cache/
+.venv/
+rl/models/*.zip
+rl/models/*.meta.json

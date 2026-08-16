@@ -51,3 +51,21 @@ POSITION_SIZE_PCT = 0.05
 MIN_NET_MARGIN = 0.0
 MIN_ROE = 0.0
 MAX_DEBT_TO_EQUITY = 2.0
+
+# --- 강화학습 기반 포트폴리오 에이전트 (rl/, 실험적) ---
+# state에 포함할 과거 일수 (기술적 지표 롤링 윈도)
+RL_LOOKBACK_WINDOW_DAYS = 20
+# 리밸런싱 시 비중 회전율(turnover)에 부과하는 거래비용 (bps, 1bp = 0.01%)
+RL_TRANSACTION_COST_BPS = 10.0
+# yfinance로 내려받을 과거 가격 데이터 기간 (년). 이 중 RL_TRAIN_TEST_SPLIT
+# 비율만큼 학습에 쓰고 나머지 최근 구간은 백테스트/드리프트 점검용으로 보류.
+RL_TRAIN_YEARS = 6
+RL_TRAIN_TEST_SPLIT = 0.8
+# 학습 에피소드 길이 (거래일). 학습 구간 내 랜덤 시작일에서 이 길이만큼 진행.
+RL_EPISODE_LENGTH_DAYS = 126
+RL_MODEL_PATH = "rl/models/ppo_portfolio.zip"
+# 리밸런싱 시 이 금액(달러) 미만의 목표-현재 비중 차이는 무시한다 (잦은 소액 거래 방지)
+RL_REBALANCE_MIN_TRADE_USD = 5.0
+# daily_run.py 드리프트 점검: 보류 구간 백테스트 최대낙폭(MDD)이 이 값을
+# 넘으면 이상 상황으로 보고 리밸런싱 없이 종료한다.
+RL_DRIFT_MAX_DRAWDOWN = 0.35
