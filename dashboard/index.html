@@ -143,7 +143,7 @@
     <div class="sub">
       <span id="status-badge" class="badge">불러오는 중…</span>
       <span id="last-updated"></span>
-      <a href="https://github.com/parkminsung45/Minsung-Investment-Model-" target="_blank" rel="noopener">GitHub 저장소</a>
+      <a href="https://github.com/parkminsung45/Minsung-RL-based-Investment-Model" target="_blank" rel="noopener">GitHub 저장소</a>
     </div>
   </header>
 
@@ -160,7 +160,7 @@
 <script>
 "use strict";
 
-const DATA_URL = "https://raw.githubusercontent.com/parkminsung45/Minsung-Investment-Model-/main/rl/daily_run_history.json";
+const DATA_URL = "https://raw.githubusercontent.com/parkminsung45/Minsung-RL-based-Investment-Model/main/rl/daily_run_history.json";
 const REFRESH_MS = 60_000;
 
 /* 색은 엔티티를 따른다 — 티커별 고정 슬롯, 필터로 재배색되지 않음 */
@@ -480,6 +480,86 @@ function weightsLegend() {
   return legend;
 }
 
+/* ---------- 4) 오늘의 포트폴리오 구성 (도넛 — part-to-whole 스냅샷) ---------- */
+/* 6슬롯 이하 + 직접 라벨이라 값이 서로 가까워도 각도만으로 비교하지 않는다. */
+
+function weightsDonut(latest) {
+  const size = 260, cx = size / 2, cy = size / 2, r = 84, stroke = 30;
+  const circumference = 2 * Math.PI * r;
+  const gapDeg = 2.2;   // 세그먼트 사이 서피스 갭(각도 기준, 스택바의 2px 갭과 동급 역할)
+
+  const slices = SERIES
+    .map(s => ({ ...s, weight: latest.weights[s.key] ?? 0 }))
+    .filter(s => s.weight > 0.0005);
+
+  const svg = svgEl("svg", { viewBox: `0 0 ${size} ${size}`, role: "img" });
+  const ring = svgEl("g", { transform: `rotate(-90 ${cx} ${cy})` });
+
+  let angleAcc = 0;
+  const labelEls = [];
+  for (const s of slices) {
+    const sweepDeg = s.weight * 360;
+    const drawDeg = Math.max(sweepDeg - gapDeg, sweepDeg * 0.5);   // 아주 작은 조각은 갭을 절반만
+    const dash = (drawDeg / 360) * circumference;
+    const offset = -((angleAcc / 360) * circumference);
+    const color = cssColor(s.cssVar);
+
+    const seg = svgEl("circle", {
+      cx, cy, r, fill: "none", stroke: color, "stroke-width": stroke,
+      "stroke-dasharray": `${dash} ${circumference - dash}`,
+      "stroke-dashoffset": offset,
+    });
+    seg.addEventListener("pointermove", (e) => {
+      seg.setAttribute("stroke-width", stroke + 4);
+      showTooltip(e.clientX, e.clientY, latest.date, [
+        { color, value: (s.weight * 100).toFixed(1) + "%", name: s.label },
+      ]);
+    });
+    seg.addEventListener("pointerleave", () => { seg.setAttribute("stroke-width", stroke); hideTooltip(); });
+    ring.appendChild(seg);
+
+    // 직접 라벨(선택적) — 4% 미만 조각은 겹치므로 라벨 생략, 범례+툴팁이 대신 전달
+    if (s.weight >= 0.04) {
+      const midDeg = angleAcc + sweepDeg / 2 - 90;   // group의 -90 회전 보정
+      const rad = (midDeg * Math.PI) / 180;
+      const labelR = r + stroke / 2 + 16;
+      labelEls.push({
+        x: cx + labelR * Math.cos(rad),
+        y: cy + labelR * Math.sin(rad),
+        text: (s.weight * 100).toFixed(0) + "%",
+      });
+    }
+    angleAcc += sweepDeg;
+  }
+  svg.appendChild(ring);
+
+  for (const l of labelEls) {
+    const t = svgEl("text", {
+      x: l.x, y: l.y + 4, "text-anchor": "middle",
+      "font-size": 12, "font-weight": 650, fill: cssColor("--text-secondary"),
+    });
+    t.textContent = l.text;
+    svg.appendChild(t);
+  }
+
+  // 중심 라벨 — 총 포트폴리오 가치(맥락), KPI 타일의 히어로 수치를 반복하지 않도록 작게
+  const centerValue = svgEl("text", {
+    x: cx, y: cy - 2, "text-anchor": "middle", "font-size": 15, "font-weight": 650,
+    fill: cssColor("--text-primary"),
+  });
+  centerValue.textContent = fmtUsd(latest.portfolio_value);
+  const centerLabel = svgEl("text", {
+    x: cx, y: cy + 16, "text-anchor": "middle", "font-size": 11, fill: cssColor("--text-muted"),
+  });
+  centerLabel.textContent = latest.date;
+  svg.appendChild(centerValue);
+  svg.appendChild(centerLabel);
+
+  const wrap = el("div", { style: "display:flex; justify-content:center;" });
+  wrap.appendChild(svg);
+  return wrap;
+}
+
 /* ---------- KPI 타일 ---------- */
 
 function kpiRow(history) {
@@ -607,6 +687,11 @@ function render() {
     frag.appendChild(el("div", { class: "empty", text: "선택한 기간에 기록이 없습니다." }));
   } else {
     frag.appendChild(kpiRow(history));
+    const donutLatest = history[history.length - 1];
+    frag.appendChild(card(
+      "오늘의 포트폴리오 구성", donutLatest.date + " 기준 종목별 목표 비중",
+      weightsDonut(donutLatest), weightsLegend(),
+    ));
     frag.appendChild(card("포트폴리오 가치 추이", "매 실행 시점의 계좌 평가액 (USD)", valueChart(history)));
     frag.appendChild(card("일간 수익률", "직전 기록 대비 변화율 — 위 파랑, 아래 빨강", returnsChart(history)));
     frag.appendChild(card("목표 비중 추이", "모델이 산출한 종목별 목표 비중 (100% 스택)", weightsChart(history), weightsLegend()));

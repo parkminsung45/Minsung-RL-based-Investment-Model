@@ -17,19 +17,31 @@ config.TOSS_LIVE_TRADING=false(기본값)인 동안은 broker.create_order()가
     --push 옵션을 주면 실행 후 갱신된 기록(rl/daily_run_history.json, README.md)을
     git commit/push한다 - Vercel 대시보드가 GitHub raw JSON을 읽으므로, push까지
     해야 대시보드에 당일 기록이 반영된다.
-크론 예시 (평일 아침, main.py와 동일한 캘린더):
-    0 8 * * 1-5 cd /path/to/repo && /usr/bin/python3 -m rl.daily_run --push >> rl_log.txt 2>&1
+
+토스증권 API가 해외(클라우드) IP를 차단해(2026-08-17 확인) 반드시 한국 IP의
+컴퓨터에서 실행해야 한다. 정확한 시각의 cron 대신, 이 컴퓨터가 켜져 있고
+인터넷에 연결된 동안 launchd가 일정 주기(예: 30분)로 계속 이 스크립트를
+호출하도록 등록하는 걸 권장한다(README "실거래 자동화" 참고) - 잠자는 동안
+놓친 실행을 cron은 그냥 건너뛰지만, launchd는 깨어나는 대로 다시 시도한다.
+그래서 run()은 자체적으로 (1) 주말이면 건너뛰고 (2) 오늘 이미 완주한 실행
+기록이 있으면 건너뛰어, 하루에 여러 번 트리거돼도 안전(idempotent)하다.
 """
 import argparse
 import os
 import subprocess
 from datetime import date
+from typing import Optional
 
 import broker
 import config
 from rl import backtest, daily_log, rl_strategy
 
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def _already_ran_today(today_iso: str) -> bool:
+    history = daily_log.load_history()
+    return bool(history) and history[-1]["date"] == today_iso
 
 
 def check_drift(model, meta) -> bool:
@@ -71,7 +83,17 @@ def push_history() -> None:
         print(f"[push] 경고: git 커밋/푸시 실패 ({exc}) - 기록은 로컬에 저장돼 있으니 수동으로 push하세요")
 
 
-def run(push: bool = False):
+def run(push: bool = False, today: Optional[date] = None):
+    today = today or date.today()
+
+    if today.weekday() >= 5:  # 5=토, 6=일 - 미국 증시 휴장
+        print(f"[skip] {today.isoformat()}은 주말입니다 - 리밸런싱 생략")
+        return []
+
+    if _already_ran_today(today.isoformat()):
+        print(f"[skip] 오늘({today.isoformat()}) 이미 완주한 실행 기록이 있습니다 - 생략")
+        return []
+
     print("[1/3] 모델 로드 및 드리프트 점검 중...")
     model, meta = rl_strategy.load_model_and_meta()
 

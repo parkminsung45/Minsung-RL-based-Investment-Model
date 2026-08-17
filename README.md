@@ -262,11 +262,49 @@ python -m rl.daily_run
 기본 드라이런, `confirm=True` 필요)가 `strategy.run()`과 동일하게
 그대로 적용됩니다 — `rl_strategy.py`도 실거래 여부를 직접 판단하지 않습니다.
 
-평일 아침 크론 예시(`main.py`와 동일한 캘린더). `--push`를 붙이면 실행 후
-갱신된 기록이 자동으로 GitHub에 커밋/푸시되어 아래 대시보드에 반영됩니다:
+**⚠️ 반드시 한국 IP에서 실행해야 합니다.** 토스증권 API는 해외(클라우드) IP의
+OAuth 토큰 발급을 403으로 거부합니다(2026-08-17 GitHub Actions에서 실제 확인 -
+로컬/한국 IP에서는 동일 코드·키로 정상 동작). 그래서 GitHub Actions 등
+해외 리전 클라우드로는 자동화할 수 없고, **한국에 있는 컴퓨터**에서 돌려야
+합니다. `.github/workflows/daily_run.yml`은 참고용으로 남겨뒀지만 스케줄은
+꺼두었습니다(수동 실행만 가능) — 이 안에서 실행하면 항상 실패합니다.
+
+**cron 대신 launchd(macOS)를 권장합니다.** 정해진 시각에만 도는 cron은 그
+시각에 컴퓨터가 잠들어 있으면 그날 실행을 그냥 건너뜁니다. `run()`은 자체적으로
+(1) 주말이면 스킵, (2) 오늘 이미 완주한 실행 기록이 있으면 스킵하도록 만들어져
+있어 하루에 여러 번 호출해도 안전(idempotent)하므로, launchd로 컴퓨터가 켜져
+있는 동안 짧은 주기(예: 30분)로 계속 시도하게 등록하면 됩니다 - 잠들었다
+깨어나도 다음 주기에 자동으로 따라잡습니다. `~/Library/LaunchAgents/`에
+아래처럼 등록(`--push`로 실행 후 기록을 자동 커밋/푸시해 대시보드에 반영):
+
+```xml
+<!-- ~/Library/LaunchAgents/com.minsung.rl-daily-run.plist -->
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+    <key>Label</key><string>com.minsung.rl-daily-run</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/path/to/repo/.venv/bin/python</string>
+        <string>-m</string><string>rl.daily_run</string><string>--push</string>
+    </array>
+    <key>WorkingDirectory</key><string>/path/to/repo</string>
+    <key>StartInterval</key><integer>1800</integer>
+    <key>RunAtLoad</key><true/>
+    <key>StandardOutPath</key><string>/path/to/repo/rl_daily_run.log</string>
+    <key>StandardErrorPath</key><string>/path/to/repo/rl_daily_run.log</string>
+</dict></plist>
+```
+
+```bash
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.minsung.rl-daily-run.plist
+```
+
+리눅스 서버(한국 리전)에서 돌린다면 cron도 괜찮지만, 서버는 보통 항상 켜져
+있어 "잠들었다 깨어남" 문제 자체가 없기 때문입니다:
 
 ```
-0 8 * * 1-5 cd /path/to/repo && /usr/bin/python3 -m rl.daily_run --push >> rl_log.txt 2>&1
+0 8 * * 1-5 cd /path/to/repo && /path/to/repo/.venv/bin/python -m rl.daily_run --push >> rl_daily_run.log 2>&1
 ```
 
 ### 실시간 대시보드 (Vercel)
