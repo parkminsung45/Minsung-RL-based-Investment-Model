@@ -8,3 +8,4 @@ __pycache__/
 .venv/
 rl/models/*.zip
 rl/models/*.meta.json
+rl_daily_run.log
