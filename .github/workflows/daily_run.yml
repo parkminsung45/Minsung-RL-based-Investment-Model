@@ -1,1 +1,48 @@
+name: RL daily run
 
+on:
+  schedule:
+    - cron: "0 23 * * 0-4"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+concurrency:
+  group: rl-daily-run
+  cancel-in-progress: false
+
+jobs:
+  daily-run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: 의존성 설치
+        run: pip install -r requirements.txt
+
+      - name: 학습된 모델 캐시 복원
+        id: cache-model
+        uses: actions/cache@v4
+        with:
+          path: rl/models
+          key: rl-model-v1
+
+      - name: 모델 없으면 최초 학습
+        if: steps.cache-model.outputs.cache-hit != 'true'
+        run: python -m rl.train
+
+      - name: 일별 리밸런싱 실행 + 기록 push
+        env:
+          TOSS_CLIENT_ID: ${{ secrets.TOSS_CLIENT_ID }}
+          TOSS_CLIENT_SECRET: ${{ secrets.TOSS_CLIENT_SECRET }}
+          TOSS_LIVE_TRADING: ${{ secrets.TOSS_LIVE_TRADING }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          python -m rl.daily_run --push
