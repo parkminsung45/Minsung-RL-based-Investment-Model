@@ -105,7 +105,13 @@
 
   .legend { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 8px; font-size: 12px; color: var(--text-secondary); }
   .legend .key { display: inline-flex; align-items: center; gap: 5px; }
-  .legend .swatch { width: 10px; height: 10px; border-radius: 3px; }
+  .swatch { width: 10px; height: 10px; border-radius: 3px; flex: none; }
+
+  .donut-card-body { display: flex; align-items: center; gap: 32px; flex-wrap: wrap; }
+  .donut-legend { display: grid; grid-template-columns: repeat(2, auto); gap: 8px 32px; }
+  .donut-legend-row { display: flex; align-items: center; gap: 7px; font-size: 13px; white-space: nowrap; }
+  .donut-legend-name { color: var(--text-primary); }
+  .donut-legend-pct { color: var(--text-secondary); font-variant-numeric: tabular-nums; margin-left: 2px; }
 
   .tooltip {
     position: fixed; pointer-events: none; z-index: 10; display: none;
@@ -480,26 +486,32 @@ function weightsLegend() {
   return legend;
 }
 
-/* ---------- 4) 오늘의 포트폴리오 구성 (도넛 — part-to-whole 스냅샷) ---------- */
-/* 6슬롯 이하 + 직접 라벨이라 값이 서로 가까워도 각도만으로 비교하지 않는다. */
+/* ---------- 4) 오늘의 포트폴리오 구성 (도넛 + 비중 리스트, part-to-whole 스냅샷) ---------- */
+/* 링에는 라벨을 두지 않는다(작은 원 위에 6개 라벨은 겹쳐서 지저분해짐) - 값은
+   옆 리스트와 호버 툴팁이 전담한다. 도넛은 고정 크기(전역 svg{width:100%}
+   규칙에 휩쓸리지 않도록 인라인 style로 명시). */
+
+const DONUT_SIZE = 168, DONUT_R = 58, DONUT_STROKE = 22;
 
 function weightsDonut(latest) {
-  const size = 260, cx = size / 2, cy = size / 2, r = 84, stroke = 30;
+  const size = DONUT_SIZE, cx = size / 2, cy = size / 2, r = DONUT_R, stroke = DONUT_STROKE;
   const circumference = 2 * Math.PI * r;
-  const gapDeg = 2.2;   // 세그먼트 사이 서피스 갭(각도 기준, 스택바의 2px 갭과 동급 역할)
+  const gapDeg = 3;   // 세그먼트 사이 서피스 갭(각도 기준) - 등근 컷 없이 딱 떨어지게
 
   const slices = SERIES
     .map(s => ({ ...s, weight: latest.weights[s.key] ?? 0 }))
     .filter(s => s.weight > 0.0005);
 
-  const svg = svgEl("svg", { viewBox: `0 0 ${size} ${size}`, role: "img" });
+  const svg = svgEl("svg", {
+    viewBox: `0 0 ${size} ${size}`, role: "img",
+    style: `width:${size}px; height:${size}px; flex: none;`,
+  });
   const ring = svgEl("g", { transform: `rotate(-90 ${cx} ${cy})` });
 
   let angleAcc = 0;
-  const labelEls = [];
   for (const s of slices) {
     const sweepDeg = s.weight * 360;
-    const drawDeg = Math.max(sweepDeg - gapDeg, sweepDeg * 0.5);   // 아주 작은 조각은 갭을 절반만
+    const drawDeg = Math.max(sweepDeg - gapDeg, sweepDeg * 0.35);   // 아주 작은 조각은 갭을 줄임
     const dash = (drawDeg / 360) * circumference;
     const offset = -((angleAcc / 360) * circumference);
     const color = cssColor(s.cssVar);
@@ -510,54 +522,50 @@ function weightsDonut(latest) {
       "stroke-dashoffset": offset,
     });
     seg.addEventListener("pointermove", (e) => {
-      seg.setAttribute("stroke-width", stroke + 4);
+      seg.setAttribute("stroke-width", stroke + 3);
       showTooltip(e.clientX, e.clientY, latest.date, [
         { color, value: (s.weight * 100).toFixed(1) + "%", name: s.label },
       ]);
     });
     seg.addEventListener("pointerleave", () => { seg.setAttribute("stroke-width", stroke); hideTooltip(); });
     ring.appendChild(seg);
-
-    // 직접 라벨(선택적) — 4% 미만 조각은 겹치므로 라벨 생략, 범례+툴팁이 대신 전달
-    if (s.weight >= 0.04) {
-      const midDeg = angleAcc + sweepDeg / 2 - 90;   // group의 -90 회전 보정
-      const rad = (midDeg * Math.PI) / 180;
-      const labelR = r + stroke / 2 + 16;
-      labelEls.push({
-        x: cx + labelR * Math.cos(rad),
-        y: cy + labelR * Math.sin(rad),
-        text: (s.weight * 100).toFixed(0) + "%",
-      });
-    }
     angleAcc += sweepDeg;
   }
   svg.appendChild(ring);
 
-  for (const l of labelEls) {
-    const t = svgEl("text", {
-      x: l.x, y: l.y + 4, "text-anchor": "middle",
-      "font-size": 12, "font-weight": 650, fill: cssColor("--text-secondary"),
-    });
-    t.textContent = l.text;
-    svg.appendChild(t);
-  }
-
-  // 중심 라벨 — 총 포트폴리오 가치(맥락), KPI 타일의 히어로 수치를 반복하지 않도록 작게
+  // 중심 라벨 — 총 포트폴리오 가치 하나만 (카드 부제에 날짜가 이미 있어 반복하지 않음)
   const centerValue = svgEl("text", {
-    x: cx, y: cy - 2, "text-anchor": "middle", "font-size": 15, "font-weight": 650,
+    x: cx, y: cy + 5, "text-anchor": "middle", "font-size": 15, "font-weight": 650,
     fill: cssColor("--text-primary"),
   });
   centerValue.textContent = fmtUsd(latest.portfolio_value);
-  const centerLabel = svgEl("text", {
-    x: cx, y: cy + 16, "text-anchor": "middle", "font-size": 11, fill: cssColor("--text-muted"),
-  });
-  centerLabel.textContent = latest.date;
   svg.appendChild(centerValue);
-  svg.appendChild(centerLabel);
 
-  const wrap = el("div", { style: "display:flex; justify-content:center;" });
-  wrap.appendChild(svg);
-  return wrap;
+  return svg;
+}
+
+function weightsDonutLegend(latest) {
+  const rows = SERIES
+    .map(s => ({ ...s, weight: latest.weights[s.key] ?? 0 }))
+    .filter(s => s.weight > 0.0005)
+    .sort((a, b) => b.weight - a.weight);
+
+  const list = el("div", { class: "donut-legend" });
+  for (const r of rows) {
+    const swatch = el("span", { class: "swatch" });
+    swatch.style.background = cssColor(r.cssVar);
+    const row = el("div", { class: "donut-legend-row" }, [
+      swatch,
+      el("span", { class: "donut-legend-name", text: r.label }),
+      el("span", { class: "donut-legend-pct", text: (r.weight * 100).toFixed(1) + "%" }),
+    ]);
+    list.appendChild(row);
+  }
+  return list;
+}
+
+function donutCard(latest) {
+  return el("div", { class: "donut-card-body" }, [weightsDonut(latest), weightsDonutLegend(latest)]);
 }
 
 /* ---------- KPI 타일 ---------- */
@@ -690,7 +698,7 @@ function render() {
     const donutLatest = history[history.length - 1];
     frag.appendChild(card(
       "오늘의 포트폴리오 구성", donutLatest.date + " 기준 종목별 목표 비중",
-      weightsDonut(donutLatest), weightsLegend(),
+      donutCard(donutLatest),
     ));
     frag.appendChild(card("포트폴리오 가치 추이", "매 실행 시점의 계좌 평가액 (USD)", valueChart(history)));
     frag.appendChild(card("일간 수익률", "직전 기록 대비 변화율 — 위 파랑, 아래 빨강", returnsChart(history)));
