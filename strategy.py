@@ -64,23 +64,30 @@ def decide_action(score: float) -> str:
 
 
 def _extract_value(response: Dict, candidate_keys: List[str]) -> Optional[float]:
+    """
+    실계좌 검증 완료(2026-08-17): 응답 본문은 {"result": {...}}로 감싸져 있고
+    수치는 문자열이다. result 안쪽을 먼저 보고, float()가 문자열도 처리한다.
+    """
+    if isinstance(response.get("result"), dict):
+        response = response["result"]
     for key in candidate_keys:
         if key in response and response[key] is not None:
             return float(response[key])
     return None
 
 
-def _held_symbols(client: broker.TossClient) -> set:
+def _holdings_items(client: broker.TossClient) -> List[Dict]:
+    """실계좌 검증 완료(2026-08-17): 보유종목 리스트는 result.items에 있다."""
     holdings = broker.get_holdings(client)
-    items = holdings.get("holdings", holdings) if isinstance(holdings, dict) else holdings
-    if not isinstance(items, list):
-        return set()
-    symbols = set()
-    for item in items:
-        symbol = item.get("symbol") or item.get("ticker")
-        if symbol:
-            symbols.add(symbol)
-    return symbols
+    if not isinstance(holdings, dict):
+        return []
+    result = holdings.get("result", holdings)
+    items = result.get("items") if isinstance(result, dict) else None
+    return items if isinstance(items, list) else []
+
+
+def _held_symbols(client: broker.TossClient) -> set:
+    return {item["symbol"] for item in _holdings_items(client) if item.get("symbol")}
 
 
 def run(client: broker.TossClient, scores: Optional[Dict[str, float]] = None) -> List[Dict]:
@@ -104,8 +111,8 @@ def run(client: broker.TossClient, scores: Optional[Dict[str, float]] = None) ->
                 results.append({"symbol": symbol, "score": score, "action": "SKIP_UNHEALTHY_FINANCIALS"})
                 continue
 
-            buying_power = broker.get_buying_power(client, symbol)
-            available = _extract_value(buying_power, ["buyingPower", "availableAmount", "amount"])
+            buying_power = broker.get_buying_power(client, currency="USD")
+            available = _extract_value(buying_power, ["cashBuyingPower"])
             order_amount = round((available or 0) * config.POSITION_SIZE_PCT, 2)
             if order_amount <= 0:
                 results.append({"symbol": symbol, "score": score, "action": "SKIP_NO_BUYING_POWER"})

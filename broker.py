@@ -102,12 +102,21 @@ def get_accounts(client: TossClient) -> Dict:
 
 
 def get_holdings(client: TossClient) -> Dict:
+    """
+    실계좌 검증 완료(2026-08-17): 응답은 {"result": {..., "items": [{"symbol",
+    "quantity"(str), "lastPrice"(str), ...}]}} 형태이며 수치는 전부 문자열이다.
+    """
     return client.request("GET", "/api/v1/holdings", with_account=True)
 
 
-def get_buying_power(client: TossClient, symbol: Optional[str] = None) -> Dict:
-    params = {"symbol": symbol} if symbol else {}
-    return client.request("GET", "/api/v1/buying-power", with_account=True, params=params)
+def get_buying_power(client: TossClient, currency: str = "USD") -> Dict:
+    """
+    실계좌 검증 완료(2026-08-17): currency 쿼리 파라미터가 필수이며(KRW/USD),
+    응답은 {"result": {"currency", "cashBuyingPower"(str)}} 형태다.
+    """
+    return client.request(
+        "GET", "/api/v1/buying-power", with_account=True, params={"currency": currency}
+    )
 
 
 def get_sellable_quantity(client: TossClient, symbol: str) -> Dict:
@@ -141,6 +150,13 @@ def create_order(
     confirm_high_value_order: 1억원 이상 주문 시 착오주문 방지용 확인 플래그
     confirm: True로 명시해야 실거래 모드(config.TOSS_LIVE_TRADING=true)에서 실제 전송됨
     """
+    # 이 계좌는 미국 주식 전용으로 운용한다(2026-08-17 결정). KRX 종목코드는
+    # 6자리 숫자라 형태로 구분 가능 - 국내 주식 주문은 여기서 무조건 차단한다.
+    if symbol.isdigit():
+        raise ValueError(
+            f"국내(KRX) 종목 주문은 차단되어 있습니다: {symbol!r}. "
+            "이 시스템은 미국 주식 전용입니다."
+        )
     if side not in ("BUY", "SELL"):
         raise ValueError("side는 'BUY' 또는 'SELL'이어야 합니다.")
     if order_type not in ("LIMIT", "MARKET"):

@@ -48,6 +48,8 @@ cp .env.example .env
 │   ├── daily_log.py     # 실행 기록 누적(daily_run_history.json) + README 자동 갱신
 │   ├── daily_run_history.json  # 일별 실행 기록 누적 데이터 (git 추적)
 │   └── models/           # 학습된 모델(.zip)과 메타데이터(.meta.json) 저장 위치
+├── dashboard/
+│   └── index.html        # Vercel 실시간 대시보드 (daily_run_history.json 시각화)
 ├── tests/
 │   ├── test_data_pipeline.py
 │   ├── test_broker.py
@@ -260,10 +262,24 @@ python -m rl.daily_run
 기본 드라이런, `confirm=True` 필요)가 `strategy.run()`과 동일하게
 그대로 적용됩니다 — `rl_strategy.py`도 실거래 여부를 직접 판단하지 않습니다.
 
-평일 아침 크론 예시(`main.py`와 동일한 캘린더):
+평일 아침 크론 예시(`main.py`와 동일한 캘린더). `--push`를 붙이면 실행 후
+갱신된 기록이 자동으로 GitHub에 커밋/푸시되어 아래 대시보드에 반영됩니다:
 
 ```
-0 8 * * 1-5 cd /path/to/repo && /usr/bin/python3 -m rl.daily_run >> rl_log.txt 2>&1
+0 8 * * 1-5 cd /path/to/repo && /usr/bin/python3 -m rl.daily_run --push >> rl_log.txt 2>&1
+```
+
+### 실시간 대시보드 (Vercel)
+
+**https://minsung-investment-dashboard.vercel.app**
+
+`dashboard/index.html` 정적 페이지가 이 저장소의 `rl/daily_run_history.json`
+(raw GitHub)을 60초마다 읽어 포트폴리오 가치 추이, 일간 수익률, 종목별 목표
+비중, 전체 기록 표를 보여줍니다. 별도 서버 없이 저장소에 기록이 push되면
+자동 반영됩니다(GitHub raw 캐시로 수 분 지연 가능). 재배포:
+
+```bash
+cd dashboard && npx vercel deploy --prod
 ```
 
 ### 일별 실행 기록 (자동 생성)
@@ -275,7 +291,15 @@ python -m rl.daily_run
 동일한 방식입니다.
 
 <!-- RL_DAILY_LOG_START -->
-_아직 기록된 실행이 없습니다. `python -m rl.daily_run`을 실행하면 자동으로 채워집니다._
+실행할 때마다 이 표/그래프가 자동으로 갱신됩니다 (`rl/daily_run.py`가
+`rl/daily_run_history.json`에 결과를 추가하고 이 구간을 재생성합니다 -
+수동으로 이 마커(`RL_DAILY_LOG_START`/`_END`) 사이를 직접 편집하지
+마세요, 다음 실행 때 덮어써집니다). 드리프트 임계값 초과로 리밸런싱을
+건너뛴 실행은 기록하지 않습니다.
+
+| 날짜 | 포트폴리오 가치 | 일간 수익률 | AAPL | AMZN | GOOGL | MSFT | NVDA | 현금 | 비고 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 2026-08-17 | $72.56 | - | 16.8% | 16.9% | 16.7% | 16.9% | 16.0% | 16.7% | (dry-run) |
 <!-- RL_DAILY_LOG_END -->
 
 ### 향후 확장
