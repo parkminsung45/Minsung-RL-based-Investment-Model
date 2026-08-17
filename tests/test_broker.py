@@ -157,3 +157,13 @@ def test_modify_order_dry_run_does_not_call_client():
     client.request.assert_not_called()
     assert result["dry_run"] is True
     assert result["would_send"]["price"] == 150
+
+
+def test_create_order_rejects_krx_symbols():
+    # 미국 주식 전용 계좌(2026-08-17 결정) - KRX 6자리 숫자 코드는 무조건 차단.
+    client = MagicMock()
+    with pytest.raises(ValueError, match="KRX"):
+        broker.create_order(
+            client, symbol="005930", side="BUY", order_type="MARKET", quantity=1
+        )
+    client.request.assert_not_called()

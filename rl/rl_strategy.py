@@ -46,16 +46,15 @@ def _build_observation(feature_df, tickers: List[str], window: int, current_weig
 
 
 def _holdings_by_symbol(client: broker.TossClient) -> Dict[str, float]:
-    holdings = broker.get_holdings(client)
-    items = holdings.get("holdings", holdings) if isinstance(holdings, dict) else holdings
-    if not isinstance(items, list):
-        return {}
+    """실계좌 검증 완료(2026-08-17): 보유종목은 result.items, quantity는 문자열."""
+    from strategy import _holdings_items
+
     qty_by_symbol = {}
-    for item in items:
-        symbol = item.get("symbol") or item.get("ticker")
-        qty = _extract_value(item, ["quantity", "holdingQuantity", "sellableQuantity"])
-        if symbol and qty:
-            qty_by_symbol[symbol] = qty
+    for item in _holdings_items(client):
+        symbol = item.get("symbol")
+        qty = item.get("quantity")
+        if symbol and qty is not None and float(qty) > 0:
+            qty_by_symbol[symbol] = float(qty)
     return qty_by_symbol
 
 
@@ -110,7 +109,7 @@ def run(
 
     latest_close = {t: float(close_df[t].iloc[-1]) for t in tickers}
     qty_by_symbol = _holdings_by_symbol(client)
-    cash = _extract_value(broker.get_buying_power(client), ["buyingPower", "availableAmount", "amount"]) or 0.0
+    cash = _extract_value(broker.get_buying_power(client, currency="USD"), ["cashBuyingPower"]) or 0.0
     current_weights = _current_weights(qty_by_symbol, latest_close, cash, tickers)
 
     obs = _build_observation(feature_df, tickers, window, current_weights)

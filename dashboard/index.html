@@ -1,0 +1,637 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Minsung Investment Model — RL 포트폴리오</title>
+<style>
+  /* 팔레트: dataviz 검증 통과(라이트/다크 6슬롯, 2026-08-17 validate_palette.js) */
+  :root {
+    color-scheme: light;
+    --page:           #f9f9f7;
+    --surface:        #fcfcfb;
+    --text-primary:   #0b0b0b;
+    --text-secondary: #52514e;
+    --text-muted:     #898781;
+    --grid:           #e1e0d9;
+    --baseline:       #c3c2b7;
+    --border:         rgba(11,11,11,0.10);
+    --up:             #006300;   /* 델타 상승(성공 텍스트) */
+    --down:           #d03b3b;   /* 델타 하락 */
+    --pos:            #2a78d6;   /* 다이버징 + (blue) */
+    --neg:            #e34948;   /* 다이버징 - (red) */
+    --s-aapl:         #2a78d6;   /* slot 1 blue */
+    --s-msft:         #eb6834;   /* slot 2 orange */
+    --s-nvda:         #1baf7a;   /* slot 3 aqua */
+    --s-googl:        #eda100;   /* slot 4 yellow */
+    --s-amzn:         #e87ba4;   /* slot 5 magenta */
+    --s-cash:         #008300;   /* slot 6 green */
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --page:           #0d0d0d;
+      --surface:        #1a1a19;
+      --text-primary:   #ffffff;
+      --text-secondary: #c3c2b7;
+      --text-muted:     #898781;
+      --grid:           #2c2c2a;
+      --baseline:       #383835;
+      --border:         rgba(255,255,255,0.10);
+      --up:             #0ca30c;
+      --down:           #e66767;
+      --pos:            #3987e5;
+      --neg:            #e66767;
+      --s-aapl:         #3987e5;
+      --s-msft:         #d95926;
+      --s-nvda:         #199e70;
+      --s-googl:        #c98500;
+      --s-amzn:         #d55181;
+      --s-cash:         #008300;
+    }
+  }
+
+  * { box-sizing: border-box; margin: 0; }
+  body {
+    background: var(--page);
+    color: var(--text-primary);
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    padding: 24px 16px 48px;
+  }
+  .wrap { max-width: 1080px; margin: 0 auto; }
+
+  header { margin-bottom: 20px; }
+  header h1 { font-size: 20px; font-weight: 650; }
+  header .sub { margin-top: 4px; color: var(--text-secondary); font-size: 13px; display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+  .badge {
+    display: inline-block; padding: 2px 8px; border-radius: 999px;
+    border: 1px solid var(--border); font-size: 12px; color: var(--text-secondary);
+  }
+  .badge.dry { border-color: var(--border); }
+  .badge.live { color: var(--down); font-weight: 600; }
+  header a { color: var(--text-secondary); }
+
+  /* 필터 행 — 차트 위 한 줄, 아래 전체를 스코프 */
+  .filters { display: flex; gap: 6px; margin-bottom: 16px; flex-wrap: wrap; }
+  .filters button {
+    background: var(--surface); color: var(--text-secondary);
+    border: 1px solid var(--border); border-radius: 8px;
+    padding: 6px 12px; font-size: 13px; font-family: inherit; cursor: pointer;
+  }
+  .filters button[aria-pressed="true"] { color: var(--text-primary); font-weight: 650; border-color: var(--baseline); }
+  .filters button:hover { color: var(--text-primary); }
+
+  .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 16px; }
+  .tile {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 12px; padding: 14px 16px;
+  }
+  .tile .label { font-size: 12px; color: var(--text-secondary); }
+  .tile .value { font-size: 26px; font-weight: 650; margin-top: 4px; }
+  .tile .delta { font-size: 12px; margin-top: 2px; color: var(--text-muted); }
+  .tile .delta.up { color: var(--up); }
+  .tile .delta.down { color: var(--down); }
+
+  .card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 12px; padding: 16px; margin-bottom: 16px;
+  }
+  .card h2 { font-size: 14px; font-weight: 650; margin-bottom: 2px; }
+  .card .desc { font-size: 12px; color: var(--text-muted); margin-bottom: 10px; }
+  .card.refreshing .plot { opacity: 0.5; }
+  .plot { width: 100%; }
+  svg { display: block; width: 100%; height: auto; }
+  svg text { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
+
+  .legend { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 8px; font-size: 12px; color: var(--text-secondary); }
+  .legend .key { display: inline-flex; align-items: center; gap: 5px; }
+  .legend .swatch { width: 10px; height: 10px; border-radius: 3px; }
+
+  .tooltip {
+    position: fixed; pointer-events: none; z-index: 10; display: none;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+    padding: 8px 10px; font-size: 12px; box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+    min-width: 130px;
+  }
+  .tooltip .t-date { color: var(--text-muted); margin-bottom: 4px; }
+  .tooltip .t-row { display: flex; align-items: center; gap: 6px; margin-top: 2px; }
+  .tooltip .t-key { width: 10px; height: 3px; border-radius: 2px; flex: none; }
+  .tooltip .t-val { font-weight: 650; }
+  .tooltip .t-name { color: var(--text-secondary); }
+
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  th, td { text-align: right; padding: 7px 8px; border-bottom: 1px solid var(--grid); white-space: nowrap; }
+  th:first-child, td:first-child { text-align: left; }
+  th { color: var(--text-secondary); font-weight: 600; }
+  td { font-variant-numeric: tabular-nums; color: var(--text-primary); }
+  td.up { color: var(--up); }
+  td.down { color: var(--down); }
+  .table-scroll { overflow-x: auto; }
+
+  .empty {
+    text-align: center; color: var(--text-secondary); font-size: 14px;
+    padding: 48px 16px; line-height: 1.7;
+  }
+  .empty code { background: var(--page); border: 1px solid var(--border); border-radius: 6px; padding: 1px 6px; font-size: 12.5px; }
+  footer { color: var(--text-muted); font-size: 12px; margin-top: 8px; line-height: 1.6; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Minsung Investment Model — RL 포트폴리오</h1>
+    <div class="sub">
+      <span id="status-badge" class="badge">불러오는 중…</span>
+      <span id="last-updated"></span>
+      <a href="https://github.com/parkminsung45/Minsung-Investment-Model-" target="_blank" rel="noopener">GitHub 저장소</a>
+    </div>
+  </header>
+
+  <div id="app"></div>
+
+  <footer>
+    데이터: 저장소의 <code>rl/daily_run_history.json</code> —
+    <code>python -m rl.daily_run</code>이 매 거래일 갱신하며, push되면 이 페이지가 자동 반영합니다
+    (60초마다 재조회, GitHub raw 캐시로 수 분 지연 가능).
+  </footer>
+</div>
+<div id="tooltip" class="tooltip"></div>
+
+<script>
+"use strict";
+
+const DATA_URL = "https://raw.githubusercontent.com/parkminsung45/Minsung-Investment-Model-/main/rl/daily_run_history.json";
+const REFRESH_MS = 60_000;
+
+/* 색은 엔티티를 따른다 — 티커별 고정 슬롯, 필터로 재배색되지 않음 */
+const SERIES = [
+  { key: "AAPL",  label: "AAPL",  cssVar: "--s-aapl"  },
+  { key: "MSFT",  label: "MSFT",  cssVar: "--s-msft"  },
+  { key: "NVDA",  label: "NVDA",  cssVar: "--s-nvda"  },
+  { key: "GOOGL", label: "GOOGL", cssVar: "--s-googl" },
+  { key: "AMZN",  label: "AMZN",  cssVar: "--s-amzn"  },
+  { key: "CASH",  label: "현금",  cssVar: "--s-cash"  },
+];
+
+const RANGES = [
+  { key: "all", label: "전체", days: Infinity },
+  { key: "7d",  label: "최근 7일",  days: 7 },
+  { key: "30d", label: "최근 30일", days: 30 },
+  { key: "90d", label: "최근 90일", days: 90 },
+];
+
+let fullHistory = null;   // null = 아직 로드 전, [] = 데이터 없음
+let activeRange = "all";
+let loadError = null;
+
+const app = document.getElementById("app");
+const tooltip = document.getElementById("tooltip");
+
+const cssColor = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+const fmtUsd = (v) => "$" + v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const fmtPct = (v, digits = 2) => (v > 0 ? "+" : "") + v.toFixed(digits) + "%";
+
+function el(tag, attrs = {}, children = []) {
+  const node = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (k === "class") node.className = v;
+    else if (k === "text") node.textContent = v;   // 동적 문자열은 항상 textContent
+    else node.setAttribute(k, v);
+  }
+  for (const c of children) node.appendChild(c);
+  return node;
+}
+function svgEl(tag, attrs = {}) {
+  const node = document.createElementNS("http://www.w3.org/2000/svg", tag);
+  for (const [k, v] of Object.entries(attrs)) node.setAttribute(k, v);
+  return node;
+}
+
+/* ---------- 데이터 ---------- */
+
+async function fetchHistory() {
+  const res = await fetch(DATA_URL + "?t=" + Date.now(), { cache: "no-store" });
+  if (res.status === 404) return [];
+  if (!res.ok) throw new Error("HTTP " + res.status);
+  const data = await res.json();
+  return Array.isArray(data) ? data : [];
+}
+
+function sliced() {
+  const range = RANGES.find(r => r.key === activeRange);
+  if (!range || !isFinite(range.days)) return fullHistory;
+  const cutoff = new Date();
+  cutoff.setDate(cutoff.getDate() - range.days);
+  const iso = cutoff.toISOString().slice(0, 10);
+  return fullHistory.filter(h => h.date >= iso);
+}
+
+/* ---------- 툴팁 ---------- */
+
+function showTooltip(x, y, dateText, rows) {
+  tooltip.replaceChildren();
+  tooltip.appendChild(el("div", { class: "t-date", text: dateText }));
+  for (const r of rows) {
+    const key = el("span", { class: "t-key" });
+    key.style.background = r.color;
+    tooltip.appendChild(el("div", { class: "t-row" }, [
+      key,
+      el("span", { class: "t-val", text: r.value }),
+      el("span", { class: "t-name", text: r.name }),
+    ]));
+  }
+  tooltip.style.display = "block";
+  const rect = tooltip.getBoundingClientRect();
+  const left = Math.min(x + 14, window.innerWidth - rect.width - 8);
+  const top = Math.min(y + 14, window.innerHeight - rect.height - 8);
+  tooltip.style.left = left + "px";
+  tooltip.style.top = top + "px";
+}
+function hideTooltip() { tooltip.style.display = "none"; }
+
+/* ---------- 차트 공통 ---------- */
+
+const M = { top: 16, right: 56, bottom: 26, left: 52 };
+
+function niceTicks(min, max, count = 4) {
+  if (min === max) { min -= 1; max += 1; }
+  const span = max - min;
+  const step = Math.pow(10, Math.floor(Math.log10(span / count)));
+  const err = (span / count) / step;
+  const mult = err >= 7.5 ? 10 : err >= 3.5 ? 5 : err >= 1.5 ? 2 : 1;
+  const s = step * mult;
+  const ticks = [];
+  for (let v = Math.ceil(min / s) * s; v <= max + s * 1e-9; v += s) ticks.push(+v.toFixed(10));
+  return ticks;
+}
+
+function chartFrame(width, height, yTicks, yFmt, xLabels) {
+  const svg = svgEl("svg", { viewBox: `0 0 ${width} ${height}`, role: "img" });
+  for (const t of yTicks) {
+    svg.appendChild(svgEl("line", {
+      x1: M.left, x2: width - M.right, y1: t.y, y2: t.y,
+      stroke: cssColor("--grid"), "stroke-width": 1,
+    }));
+    const label = svgEl("text", {
+      x: M.left - 8, y: t.y + 4, "text-anchor": "end",
+      "font-size": 11, fill: cssColor("--text-muted"),
+      style: "font-variant-numeric: tabular-nums",
+    });
+    label.textContent = yFmt(t.value);
+    svg.appendChild(label);
+  }
+  for (const l of xLabels) {
+    const label = svgEl("text", {
+      x: l.x, y: height - 6, "text-anchor": "middle",
+      "font-size": 11, fill: cssColor("--text-muted"),
+    });
+    label.textContent = l.text;
+    svg.appendChild(label);
+  }
+  return svg;
+}
+
+function xPositions(n, width) {
+  const inner = width - M.left - M.right;
+  if (n === 1) return [M.left + inner / 2];
+  return Array.from({ length: n }, (_, i) => M.left + (inner * i) / (n - 1));
+}
+
+function pickXLabels(history, xs) {
+  const n = history.length;
+  if (n === 0) return [];
+  const idxs = n <= 6 ? history.map((_, i) => i)
+    : [0, Math.round((n - 1) * 0.25), Math.round((n - 1) * 0.5), Math.round((n - 1) * 0.75), n - 1];
+  return [...new Set(idxs)].map(i => ({ x: xs[i], text: history[i].date.slice(5) }));
+}
+
+/* ---------- 1) 포트폴리오 가치 추이 (단일 시리즈 라인 — 범례 없음) ---------- */
+
+function valueChart(history) {
+  const width = 1040, height = 260;
+  const values = history.map(h => h.portfolio_value);
+  const vMin = Math.min(...values), vMax = Math.max(...values);
+  const pad = (vMax - vMin) * 0.15 || vMax * 0.02 || 1;
+  const lo = vMin - pad, hi = vMax + pad;
+  const y = v => M.top + (height - M.top - M.bottom) * (1 - (v - lo) / (hi - lo));
+  const xs = xPositions(history.length, width);
+
+  const ticks = niceTicks(lo, hi).map(v => ({ value: v, y: y(v) }));
+  const svg = chartFrame(width, height, ticks, v => "$" + v.toLocaleString("en-US"), pickXLabels(history, xs));
+  const accent = cssColor("--pos");
+
+  if (history.length > 1) {
+    const pts = history.map((h, i) => `${xs[i]},${y(h.portfolio_value)}`).join(" ");
+    const area = `${M.left},${height - M.bottom} ${pts} ${xs[xs.length - 1]},${height - M.bottom}`;
+    svg.appendChild(svgEl("polygon", { points: area, fill: accent, opacity: 0.1 }));
+    svg.appendChild(svgEl("polyline", {
+      points: pts, fill: "none", stroke: accent,
+      "stroke-width": 2, "stroke-linejoin": "round", "stroke-linecap": "round",
+    }));
+  }
+  // 끝점 마커(≥8px) + 서피스 링 + 끝값 직접 라벨(선택적 라벨링)
+  const last = history[history.length - 1];
+  const endX = xs[xs.length - 1], endY = y(last.portfolio_value);
+  svg.appendChild(svgEl("circle", { cx: endX, cy: endY, r: 6, fill: cssColor("--surface") }));
+  svg.appendChild(svgEl("circle", { cx: endX, cy: endY, r: 4, fill: accent }));
+  const endLabel = svgEl("text", {
+    x: endX + 10, y: endY + 4, "font-size": 12, "font-weight": 650,
+    fill: cssColor("--text-primary"),
+  });
+  endLabel.textContent = fmtUsd(last.portfolio_value);
+  svg.appendChild(endLabel);
+
+  // 크로스헤어 + 툴팁 (X에 스냅)
+  const hair = svgEl("line", {
+    y1: M.top, y2: height - M.bottom, stroke: cssColor("--baseline"),
+    "stroke-width": 1, visibility: "hidden",
+  });
+  svg.appendChild(hair);
+  const hoverDotRing = svgEl("circle", { r: 6, fill: cssColor("--surface"), visibility: "hidden" });
+  const hoverDot = svgEl("circle", { r: 4, fill: accent, visibility: "hidden" });
+  svg.appendChild(hoverDotRing); svg.appendChild(hoverDot);
+
+  svg.addEventListener("pointermove", (e) => {
+    const rect = svg.getBoundingClientRect();
+    const px = ((e.clientX - rect.left) / rect.width) * width;
+    let best = 0;
+    for (let i = 1; i < xs.length; i++) if (Math.abs(xs[i] - px) < Math.abs(xs[best] - px)) best = i;
+    const h = history[best];
+    hair.setAttribute("x1", xs[best]); hair.setAttribute("x2", xs[best]);
+    hair.setAttribute("visibility", "visible");
+    hoverDotRing.setAttribute("cx", xs[best]); hoverDotRing.setAttribute("cy", y(h.portfolio_value));
+    hoverDot.setAttribute("cx", xs[best]); hoverDot.setAttribute("cy", y(h.portfolio_value));
+    hoverDotRing.setAttribute("visibility", "visible"); hoverDot.setAttribute("visibility", "visible");
+    const rows = [{ color: accent, value: fmtUsd(h.portfolio_value), name: "포트폴리오 가치" }];
+    if (h.daily_return_pct != null) rows.push({ color: "transparent", value: fmtPct(h.daily_return_pct), name: "일간 수익률" });
+    showTooltip(e.clientX, e.clientY, h.date, rows);
+  });
+  svg.addEventListener("pointerleave", () => {
+    hair.setAttribute("visibility", "hidden");
+    hoverDotRing.setAttribute("visibility", "hidden"); hoverDot.setAttribute("visibility", "hidden");
+    hideTooltip();
+  });
+  return svg;
+}
+
+/* ---------- 2) 일간 수익률 (다이버징 바) ---------- */
+
+function returnsChart(history) {
+  const points = history.filter(h => h.daily_return_pct != null);
+  if (points.length === 0) {
+    return el("div", { class: "desc", text: "일간 수익률은 기록이 2일 이상 쌓이면 표시됩니다 (첫날은 전일 기준이 없습니다)." });
+  }
+  const width = 1040, height = 220;
+  const rets = points.map(h => h.daily_return_pct);
+  const maxAbs = Math.max(...rets.map(Math.abs), 0.5);
+  const lo = -maxAbs * 1.2, hi = maxAbs * 1.2;
+  const y = v => M.top + (height - M.top - M.bottom) * (1 - (v - lo) / (hi - lo));
+  const xs = xPositions(points.length, width);
+  const slot = (width - M.left - M.right) / points.length;
+  const barW = Math.min(24, Math.max(4, slot - 2));   // ≤24px, 2px 서피스 갭 유지
+
+  const ticks = niceTicks(lo, hi).map(v => ({ value: v, y: y(v) }));
+  const svg = chartFrame(width, height, ticks, v => v + "%", pickXLabels(points, xs));
+
+  // 0 기준선
+  svg.appendChild(svgEl("line", {
+    x1: M.left, x2: width - M.right, y1: y(0), y2: y(0),
+    stroke: cssColor("--baseline"), "stroke-width": 1,
+  }));
+
+  points.forEach((h, i) => {
+    const v = h.daily_return_pct;
+    const positive = v >= 0;
+    const color = positive ? cssColor("--pos") : cssColor("--neg");
+    const top = positive ? y(v) : y(0);
+    const barH = Math.max(Math.abs(y(v) - y(0)), 1.5);
+    const r = Math.min(4, barW / 2, barH);   // 데이터 끝만 4px 라운드, 기준선 쪽은 각지게
+    const x0 = xs[i] - barW / 2;
+    const d = positive
+      ? `M ${x0} ${top + barH} L ${x0} ${top + r} Q ${x0} ${top} ${x0 + r} ${top} L ${x0 + barW - r} ${top} Q ${x0 + barW} ${top} ${x0 + barW} ${top + r} L ${x0 + barW} ${top + barH} Z`
+      : `M ${x0} ${top} L ${x0 + barW} ${top} L ${x0 + barW} ${top + barH - r} Q ${x0 + barW} ${top + barH} ${x0 + barW - r} ${top + barH} L ${x0 + r} ${top + barH} Q ${x0} ${top + barH} ${x0} ${top + barH - r} Z`;
+    const bar = svgEl("path", { d, fill: color });
+    // 히트 타깃은 마크보다 크게 (열 전체 슬롯)
+    const hit = svgEl("rect", {
+      x: xs[i] - slot / 2, y: M.top, width: slot, height: height - M.top - M.bottom,
+      fill: "transparent",
+    });
+    hit.addEventListener("pointermove", (e) => {
+      bar.setAttribute("opacity", "0.8");
+      showTooltip(e.clientX, e.clientY, h.date, [
+        { color, value: fmtPct(v), name: "일간 수익률" },
+        { color: "transparent", value: fmtUsd(h.portfolio_value), name: "포트폴리오 가치" },
+      ]);
+    });
+    hit.addEventListener("pointerleave", () => { bar.removeAttribute("opacity"); hideTooltip(); });
+    svg.appendChild(bar);
+    svg.appendChild(hit);
+  });
+  return svg;
+}
+
+/* ---------- 3) 목표 비중 추이 (100% 스택 컬럼, 6슬롯 고정) ---------- */
+
+function weightsChart(history) {
+  const width = 1040, height = 240;
+  const xs = xPositions(history.length, width);
+  const slot = (width - M.left - M.right) / history.length;
+  const barW = Math.min(24, Math.max(6, slot - 2));
+  const plotH = height - M.top - M.bottom;
+  const y = frac => M.top + plotH * frac;
+
+  const ticks = [0, 0.25, 0.5, 0.75, 1].map(f => ({ value: (1 - f) * 100, y: y(f) }));
+  const svg = chartFrame(width, height, ticks, v => v + "%", pickXLabels(history, xs));
+
+  history.forEach((h, i) => {
+    let acc = 0;
+    const x0 = xs[i] - barW / 2;
+    for (const s of SERIES) {
+      const w = h.weights[s.key] ?? 0;
+      if (w <= 0) continue;
+      const segTop = y(acc);
+      const segH = Math.max(plotH * w - 2, 1);   // 세그먼트 사이 2px 서피스 갭
+      const color = cssColor(s.cssVar);
+      const rect = svgEl("rect", { x: x0, y: segTop, width: barW, height: segH, fill: color, rx: 2 });
+      rect.addEventListener("pointermove", (e) => {
+        rect.setAttribute("opacity", "0.8");
+        showTooltip(e.clientX, e.clientY, h.date,
+          SERIES.filter(t => (h.weights[t.key] ?? 0) > 0).map(t => ({
+            color: cssColor(t.cssVar),
+            value: ((h.weights[t.key] ?? 0) * 100).toFixed(1) + "%",
+            name: t.label + (t.key === s.key ? " ◀" : ""),
+          })));
+      });
+      rect.addEventListener("pointerleave", () => { rect.removeAttribute("opacity"); hideTooltip(); });
+      svg.appendChild(rect);
+      acc += w;
+    }
+  });
+  return svg;
+}
+
+function weightsLegend() {
+  const legend = el("div", { class: "legend" });
+  for (const s of SERIES) {
+    const swatch = el("span", { class: "swatch" });
+    swatch.style.background = cssColor(s.cssVar);
+    legend.appendChild(el("span", { class: "key" }, [swatch, el("span", { text: s.label })]));
+  }
+  return legend;
+}
+
+/* ---------- KPI 타일 ---------- */
+
+function kpiRow(history) {
+  const latest = history[history.length - 1];
+  const first = history[0];
+  const cum = (latest.portfolio_value / first.portfolio_value - 1) * 100;
+  const row = el("div", { class: "kpis" });
+
+  const tile = (label, value, deltaText, deltaDir) => {
+    const t = el("div", { class: "tile" }, [
+      el("div", { class: "label", text: label }),
+      el("div", { class: "value", text: value }),
+    ]);
+    if (deltaText != null) {
+      t.appendChild(el("div", { class: "delta" + (deltaDir ? " " + deltaDir : ""), text: deltaText }));
+    }
+    return t;
+  };
+
+  row.appendChild(tile(
+    "포트폴리오 가치", fmtUsd(latest.portfolio_value),
+    latest.daily_return_pct != null ? fmtPct(latest.daily_return_pct) + " 전 기록 대비" : "첫 기록",
+    latest.daily_return_pct == null ? null : latest.daily_return_pct >= 0 ? "up" : "down",
+  ));
+  row.appendChild(tile(
+    "누적 수익률", fmtPct(cum),
+    first.date + " 이후", cum === 0 ? null : cum > 0 ? "up" : "down",
+  ));
+  row.appendChild(tile("기록된 거래일", String(history.length) + "일", "선택한 기간 기준", null));
+  row.appendChild(tile(
+    "현금 비중", ((latest.weights.CASH ?? 0) * 100).toFixed(1) + "%",
+    latest.date + " 목표 비중", null,
+  ));
+  return row;
+}
+
+/* ---------- 테이블 뷰 (차트의 WCAG 등가물) ---------- */
+
+function historyTable(history) {
+  const table = el("table");
+  const thead = el("thead");
+  const headRow = el("tr");
+  const cols = ["날짜", "가치", "일간 수익률", ...SERIES.map(s => s.label), "주문", "모드"];
+  for (const c of cols) headRow.appendChild(el("th", { text: c }));
+  thead.appendChild(headRow);
+  table.appendChild(thead);
+
+  const tbody = el("tbody");
+  for (const h of [...history].reverse()) {
+    const tr = el("tr");
+    tr.appendChild(el("td", { text: h.date }));
+    tr.appendChild(el("td", { text: fmtUsd(h.portfolio_value) }));
+    const ret = h.daily_return_pct;
+    tr.appendChild(el("td", {
+      class: ret == null ? "" : ret >= 0 ? "up" : "down",
+      text: ret == null ? "–" : fmtPct(ret),
+    }));
+    for (const s of SERIES) {
+      tr.appendChild(el("td", { text: ((h.weights[s.key] ?? 0) * 100).toFixed(1) + "%" }));
+    }
+    const acts = Object.entries(h.actions ?? {}).filter(([, a]) => a !== "HOLD").map(([sym, a]) => sym + " " + a);
+    tr.appendChild(el("td", { text: acts.length ? acts.join(", ") : "전체 HOLD" }));
+    tr.appendChild(el("td", { text: h.dry_run ? "드라이런" : "실거래" }));
+    tbody.appendChild(tr);
+  }
+  table.appendChild(tbody);
+  return table;
+}
+
+/* ---------- 렌더 ---------- */
+
+function card(title, desc, body, extra) {
+  const c = el("div", { class: "card" }, [
+    el("h2", { text: title }),
+    el("div", { class: "desc", text: desc }),
+  ]);
+  const plot = el("div", { class: "plot" });
+  plot.appendChild(body);
+  c.appendChild(plot);
+  if (extra) c.appendChild(extra);
+  return c;
+}
+
+function render() {
+  const badge = document.getElementById("status-badge");
+  const updated = document.getElementById("last-updated");
+
+  if (loadError) {
+    badge.textContent = "로드 실패";
+    app.replaceChildren(el("div", { class: "empty", text: "데이터를 불러오지 못했습니다: " + loadError + " — 60초 후 자동 재시도합니다." }));
+    return;
+  }
+  if (fullHistory === null) return;
+
+  if (fullHistory.length === 0) {
+    badge.textContent = "기록 없음";
+    const msg = el("div", { class: "empty" });
+    msg.appendChild(el("div", { text: "아직 기록된 실행이 없습니다." }));
+    const line = el("div");
+    line.appendChild(document.createTextNode("저장소에서 "));
+    line.appendChild(el("code", { text: "python -m rl.daily_run" }));
+    line.appendChild(document.createTextNode(" 실행 후 push하면 자동으로 채워집니다."));
+    msg.appendChild(line);
+    app.replaceChildren(msg);
+    return;
+  }
+
+  const latest = fullHistory[fullHistory.length - 1];
+  badge.textContent = latest.dry_run ? "드라이런 모드" : "실거래 모드";
+  badge.className = "badge " + (latest.dry_run ? "dry" : "live");
+  updated.textContent = "마지막 기록: " + latest.date;
+
+  const history = sliced();
+  const frag = document.createDocumentFragment();
+
+  const filters = el("div", { class: "filters" });
+  for (const r of RANGES) {
+    const btn = el("button", { text: r.label, "aria-pressed": String(r.key === activeRange) });
+    btn.addEventListener("click", () => { activeRange = r.key; render(); });
+    filters.appendChild(btn);
+  }
+  frag.appendChild(filters);
+
+  if (history.length === 0) {
+    frag.appendChild(el("div", { class: "empty", text: "선택한 기간에 기록이 없습니다." }));
+  } else {
+    frag.appendChild(kpiRow(history));
+    frag.appendChild(card("포트폴리오 가치 추이", "매 실행 시점의 계좌 평가액 (USD)", valueChart(history)));
+    frag.appendChild(card("일간 수익률", "직전 기록 대비 변화율 — 위 파랑, 아래 빨강", returnsChart(history)));
+    frag.appendChild(card("목표 비중 추이", "모델이 산출한 종목별 목표 비중 (100% 스택)", weightsChart(history), weightsLegend()));
+    frag.appendChild(card("전체 기록", "모든 값의 표 형태 원본 (최신순)", el("div", { class: "table-scroll" }, [historyTable(history)])));
+  }
+  app.replaceChildren(frag);
+}
+
+async function refresh() {
+  document.querySelectorAll(".card").forEach(c => c.classList.add("refreshing"));
+  try {
+    fullHistory = await fetchHistory();
+    loadError = null;
+  } catch (err) {
+    if (fullHistory === null) loadError = String(err && err.message || err);
+    // 이미 데이터가 있으면 이전 렌더를 유지한다 (스켈레톤/깜빡임 없음)
+  } finally {
+    document.querySelectorAll(".card").forEach(c => c.classList.remove("refreshing"));
+    render();
+  }
+}
+
+refresh();
+setInterval(refresh, REFRESH_MS);
+window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", render);
+</script>
+</body>
+</html>

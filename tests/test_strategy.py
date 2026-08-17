@@ -51,8 +51,8 @@ def test_load_scores_watchlist_overrides_universe(tmp_path):
 
 
 def test_run_buy_flow_sizes_position_from_buying_power(monkeypatch):
-    monkeypatch.setattr(broker, "get_holdings", lambda client: {"holdings": []})
-    monkeypatch.setattr(broker, "get_buying_power", lambda client, symbol=None: {"buyingPower": 1000})
+    monkeypatch.setattr(broker, "get_holdings", lambda client: {"result": {"items": []}})
+    monkeypatch.setattr(broker, "get_buying_power", lambda client, currency="USD": {"result": {"cashBuyingPower": "1000"}})
 
     healthy_metrics = {"netProfitMarginTTM": 10, "roeTTM": 15, "totalDebt/totalEquityAnnual": 1.0}
     monkeypatch.setattr(strategy.dp, "fetch_basic_financials", lambda symbol, key: healthy_metrics)
@@ -71,7 +71,7 @@ def test_run_buy_flow_sizes_position_from_buying_power(monkeypatch):
 
 
 def test_run_skips_buy_when_already_held(monkeypatch):
-    monkeypatch.setattr(broker, "get_holdings", lambda client: {"holdings": [{"symbol": "AAPL"}]})
+    monkeypatch.setattr(broker, "get_holdings", lambda client: {"result": {"items": [{"symbol": "AAPL", "quantity": "3"}]}})
 
     with patch("broker.create_order") as mock_create:
         client = MagicMock()
@@ -82,7 +82,7 @@ def test_run_skips_buy_when_already_held(monkeypatch):
 
 
 def test_run_skips_buy_when_financially_unhealthy(monkeypatch):
-    monkeypatch.setattr(broker, "get_holdings", lambda client: {"holdings": []})
+    monkeypatch.setattr(broker, "get_holdings", lambda client: {"result": {"items": []}})
     unhealthy_metrics = {"netProfitMarginTTM": -5, "roeTTM": -10, "totalDebt/totalEquityAnnual": 3.0}
     monkeypatch.setattr(strategy.dp, "fetch_basic_financials", lambda symbol, key: unhealthy_metrics)
 
@@ -95,8 +95,8 @@ def test_run_skips_buy_when_financially_unhealthy(monkeypatch):
 
 
 def test_run_skips_buy_when_no_buying_power(monkeypatch):
-    monkeypatch.setattr(broker, "get_holdings", lambda client: {"holdings": []})
-    monkeypatch.setattr(broker, "get_buying_power", lambda client, symbol=None: {"buyingPower": 0})
+    monkeypatch.setattr(broker, "get_holdings", lambda client: {"result": {"items": []}})
+    monkeypatch.setattr(broker, "get_buying_power", lambda client, currency="USD": {"result": {"cashBuyingPower": "0"}})
     healthy_metrics = {"netProfitMarginTTM": 10, "roeTTM": 15, "totalDebt/totalEquityAnnual": 1.0}
     monkeypatch.setattr(strategy.dp, "fetch_basic_financials", lambda symbol, key: healthy_metrics)
 
@@ -109,8 +109,8 @@ def test_run_skips_buy_when_no_buying_power(monkeypatch):
 
 
 def test_run_sell_flow_sells_full_sellable_quantity(monkeypatch):
-    monkeypatch.setattr(broker, "get_holdings", lambda client: {"holdings": [{"symbol": "AAPL"}]})
-    monkeypatch.setattr(broker, "get_sellable_quantity", lambda client, symbol: {"sellableQuantity": 7})
+    monkeypatch.setattr(broker, "get_holdings", lambda client: {"result": {"items": [{"symbol": "AAPL", "quantity": "3"}]}})
+    monkeypatch.setattr(broker, "get_sellable_quantity", lambda client, symbol: {"result": {"sellableQuantity": "7"}})
 
     with patch("broker.create_order") as mock_create:
         mock_create.return_value = {"dry_run": True}
@@ -125,7 +125,7 @@ def test_run_sell_flow_sells_full_sellable_quantity(monkeypatch):
 
 
 def test_run_skips_sell_when_not_held(monkeypatch):
-    monkeypatch.setattr(broker, "get_holdings", lambda client: {"holdings": []})
+    monkeypatch.setattr(broker, "get_holdings", lambda client: {"result": {"items": []}})
 
     with patch("broker.create_order") as mock_create:
         client = MagicMock()
@@ -136,7 +136,7 @@ def test_run_skips_sell_when_not_held(monkeypatch):
 
 
 def test_run_holds_when_score_in_neutral_range(monkeypatch):
-    monkeypatch.setattr(broker, "get_holdings", lambda client: {"holdings": []})
+    monkeypatch.setattr(broker, "get_holdings", lambda client: {"result": {"items": []}})
 
     with patch("broker.create_order") as mock_create:
         client = MagicMock()
@@ -148,8 +148,8 @@ def test_run_holds_when_score_in_neutral_range(monkeypatch):
 
 def test_run_passes_confirm_matching_live_trading_flag(monkeypatch):
     monkeypatch.setattr(config, "TOSS_LIVE_TRADING", True)
-    monkeypatch.setattr(broker, "get_holdings", lambda client: {"holdings": [{"symbol": "AAPL"}]})
-    monkeypatch.setattr(broker, "get_sellable_quantity", lambda client, symbol: {"sellableQuantity": 3})
+    monkeypatch.setattr(broker, "get_holdings", lambda client: {"result": {"items": [{"symbol": "AAPL", "quantity": "3"}]}})
+    monkeypatch.setattr(broker, "get_sellable_quantity", lambda client, symbol: {"result": {"sellableQuantity": "3"}})
 
     with patch("broker.create_order") as mock_create:
         mock_create.return_value = {"orderId": "abc"}

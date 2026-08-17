@@ -19,8 +19,8 @@ def run():
 
     client = broker.TossClient(config.TOSS_CLIENT_ID, config.TOSS_CLIENT_SECRET)
 
-    accounts = broker.get_accounts(client)
-    account_list = accounts.get("accounts", accounts) if isinstance(accounts, dict) else accounts
+    # 실계좌 검증 완료(2026-08-17): 계좌 목록은 result 키 아래 리스트로 온다.
+    account_list = broker.get_accounts(client).get("result") or []
     if not account_list:
         raise RuntimeError("조회된 계좌가 없습니다.")
     client.set_account(account_list[0]["accountSeq"])
