@@ -20,5 +20,27 @@
     },
     "dry_run": true,
     "note": ""
+  },
+  {
+    "date": "2026-08-18",
+    "portfolio_value": 72.56,
+    "daily_return_pct": 0.0,
+    "weights": {
+      "AAPL": 0.1681,
+      "MSFT": 0.1687,
+      "NVDA": 0.1599,
+      "GOOGL": 0.1673,
+      "AMZN": 0.169,
+      "CASH": 0.167
+    },
+    "actions": {
+      "AAPL": "BUY",
+      "MSFT": "BUY",
+      "NVDA": "BUY",
+      "GOOGL": "BUY",
+      "AMZN": "BUY"
+    },
+    "dry_run": true,
+    "note": ""
   }
 ]
