@@ -1,8 +1,10 @@
 name: RL daily run
 
 on:
-  schedule:
-    - cron: "0 23 * * 0-4"
+  # 스케줄 자동 실행은 꺼둠: 토스증권 API가 GitHub Actions(해외 클라우드 IP)의
+  # OAuth 토큰 발급을 403으로 거부해 여기서는 실거래 조회가 불가능함.
+  # 실제 자동매매는 로컬 launchd(com.minsung.rl-daily-run)가 담당하고,
+  # 이 워크플로는 수동 트리거로만 사용.
   workflow_dispatch: {}
 
 permissions:
