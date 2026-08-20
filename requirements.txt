@@ -8,7 +8,9 @@ stable-baselines3>=2.3.0
 gymnasium>=0.29.0
 yfinance>=0.2.40
 matplotlib>=3.8.0
+beautifulsoup4>=4.12.0
+lxml>=5.0.0
 
-# 선택 사항: nlp/sentiment_model.py의 FinBERT 앙상블 기능을 쓸 때만 필요
-# transformers>=4.40.0
-# torch>=2.2.0
+# rl/macro_blog.py: 매크로 블로그 글 크롤링(bs4) + 감성 점수화(KR-FinBert-SC)에 필요
+transformers>=4.40.0
+torch>=2.2.0

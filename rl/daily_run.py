@@ -51,7 +51,8 @@ def check_drift(model, meta) -> bool:
     """
     feature_df, close_df = backtest.load_holdout(meta)
     result = backtest.run_backtest(
-        model, feature_df, close_df, meta["tickers"], meta["window"], meta["transaction_cost_bps"]
+        model, feature_df, close_df, meta["tickers"], meta["window"], meta["transaction_cost_bps"],
+        macro_series=backtest.macro_series_for(meta),
     )
     mdd = abs(result["rl"]["metrics"]["max_drawdown"])
     print(f"[drift-check] 보류 구간 MDD={mdd:.2%} (임계값={config.RL_DRIFT_MAX_DRAWDOWN:.0%})")

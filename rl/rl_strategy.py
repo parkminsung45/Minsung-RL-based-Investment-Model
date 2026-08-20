@@ -1,12 +1,12 @@
 """
 학습된 PPO 포트폴리오 에이전트로 오늘자 목표 비중을 계산해, 보유 종목을
-목표 비중에 맞춰 리밸런싱하는 실거래 연동 모듈. strategy.py(규칙 기반)와는
-별개의 경로이며 strategy.py/run_strategy.py는 그대로 둔다 — 둘 중 하나를
-선택해서 실행한다.
+목표 비중에 맞춰 리밸런싱하는 실거래 연동 모듈. 이 저장소의 유일한 매매
+전략 경로다(과거 규칙 기반 strategy.py/뉴스+애널리스트 감성분석 파이프라인은
+매크로 블로그 기반 RL로 대체되어 제거됨).
 
 broker.create_order()의 기존 이중 안전장치(config.TOSS_LIVE_TRADING=false
-기본 드라이런, confirm=True 명시 필요)를 strategy.run()과 동일한 방식으로
-그대로 사용한다. 이 모듈은 실거래 여부를 직접 판단하지 않는다.
+기본 드라이런, confirm=True 명시 필요)를 그대로 사용한다. 이 모듈은 실거래
+여부를 직접 판단하지 않는다.
 """
 import json
 import os
@@ -19,10 +19,9 @@ from stable_baselines3 import PPO
 
 import broker
 import config
-from rl import daily_log, paper_trading
+from rl import daily_log, macro_blog, paper_trading
 from rl.price_data import load_dataset
 from rl.trading_env import PortfolioEnv
-from strategy import _extract_value
 
 # 실거래 관측 시 최근 몇 달치 데이터를 불러올지 (관측 윈도 + 60일 이동평균
 # 워밍업을 넉넉히 덮도록 여유 있게 잡음)
@@ -40,19 +39,37 @@ def load_model_and_meta(model_path: Optional[str] = None) -> Tuple[PPO, Dict]:
     return PPO.load(model_path), meta
 
 
-def _build_observation(feature_df, tickers: List[str], window: int, current_weights: np.ndarray) -> np.ndarray:
+def _build_observation(
+    feature_df, tickers: List[str], window: int, current_weights: np.ndarray,
+    macro_window: Optional[np.ndarray] = None,
+) -> np.ndarray:
     n_assets = len(tickers)
     n_features = feature_df.shape[1] // n_assets
     window_slice = feature_df.tail(window).values.astype(np.float32).reshape(window, n_assets, n_features)
-    return np.concatenate([window_slice.reshape(-1), current_weights]).astype(np.float32)
+    parts = [window_slice.reshape(-1)]
+    if macro_window is not None:
+        parts.append(macro_window.astype(np.float32))
+    parts.append(current_weights)
+    return np.concatenate(parts).astype(np.float32)
+
+
+def _macro_window(feature_df, window: int) -> np.ndarray:
+    """feature_df의 마지막 window일에 맞춰 매크로 점수 윈도를 만든다. 학습 때와
+    똑같이 결측일은 직전값으로 이어붙이고(ffill), 그마저 없으면 중립값 0.0.
+    daily_run은 30분마다 도는데, 여기서는 저장소(rl/macro_daily_scores.json)만
+    읽을 뿐 크롤링은 하지 않는다(crawling/scoring은 10시 launchd 잡 전담)."""
+    dates = feature_df.index[-window:]
+    scores = macro_blog.load_daily_scores()
+    series = pd.Series(scores, dtype=float)
+    series.index = pd.to_datetime(series.index)
+    aligned = series.reindex(dates).ffill().fillna(0.0)
+    return aligned.values
 
 
 def _holdings_by_symbol(client: broker.TossClient) -> Dict[str, float]:
     """실계좌 검증 완료(2026-08-17): 보유종목은 result.items, quantity는 문자열."""
-    from strategy import _holdings_items
-
     qty_by_symbol = {}
-    for item in _holdings_items(client):
+    for item in broker.holdings_items(client):
         symbol = item.get("symbol")
         qty = item.get("quantity")
         if symbol and qty is not None and float(qty) > 0:
@@ -85,7 +102,8 @@ def decide_target_weights(model: PPO, meta: Dict, current_weights: Optional[np.n
     if current_weights is None:
         current_weights = np.array([0.0] * len(tickers) + [1.0], dtype=np.float32)
 
-    obs = _build_observation(feature_df, tickers, window, current_weights)
+    macro_window = _macro_window(feature_df, window) if meta.get("macro_enabled") else None
+    obs = _build_observation(feature_df, tickers, window, current_weights, macro_window)
     action, _ = model.predict(obs, deterministic=True)
     weights = PortfolioEnv._softmax(action)
     return {ticker: float(w) for ticker, w in zip(tickers, weights[:-1])}
@@ -111,7 +129,7 @@ def run(
 
     latest_close = {t: float(close_df[t].iloc[-1]) for t in tickers}
     qty_by_symbol = _holdings_by_symbol(client)
-    cash = _extract_value(broker.get_buying_power(client, currency="USD"), ["cashBuyingPower"]) or 0.0
+    cash = broker.extract_value(broker.get_buying_power(client, currency="USD"), ["cashBuyingPower"]) or 0.0
     real_current_weights = _current_weights(qty_by_symbol, latest_close, cash, tickers)
 
     # 드라이런에서는 실계좌가 절대 바뀌지 않아 real_current_weights가 매일
@@ -125,7 +143,8 @@ def run(
         real_current_weights if config.TOSS_LIVE_TRADING else prior_weights.astype(np.float32)
     )
 
-    obs = _build_observation(feature_df, tickers, window, obs_current_weights)
+    macro_window = _macro_window(feature_df, window) if meta.get("macro_enabled") else None
+    obs = _build_observation(feature_df, tickers, window, obs_current_weights, macro_window)
     action, _ = model.predict(obs, deterministic=True)
     target_weights = PortfolioEnv._softmax(action)
 
@@ -146,7 +165,7 @@ def run(
             results.append({"symbol": ticker, "target_weight": target_weight, "action": "BUY", "order": order})
 
         elif diff_value < -config.RL_REBALANCE_MIN_TRADE_USD:
-            sellable = _extract_value(
+            sellable = broker.extract_value(
                 broker.get_sellable_quantity(client, ticker),
                 ["sellableQuantity", "quantity", "availableQuantity"],
             ) or 0.0

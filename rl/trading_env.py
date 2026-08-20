@@ -26,6 +26,7 @@ class PortfolioEnv(gym.Env):
         transaction_cost_bps: float = 10.0,
         random_start: bool = True,
         seed: Optional[int] = None,
+        macro_series: Optional[pd.Series] = None,
     ):
         super().__init__()
         if list(feature_df.index) != list(close_df.index):
@@ -46,7 +47,22 @@ class PortfolioEnv(gym.Env):
         self.transaction_cost = transaction_cost_bps / 10_000
         self.random_start = random_start
 
-        obs_dim = self.window * self.n_assets * self.n_features + (self.n_assets + 1)
+        # macro_series: 종목과 무관한 공통 시장 맥락(예: 매크로 블로그 감성 점수)을
+        # 하루 1개 스칼라로 받아, 가격 피처와 같은 방식으로 관측 윈도에 포함한다.
+        # feature_df 날짜 인덱스에 없는 날은 직전값으로 이어붙이고(ffill), 그마저
+        # 없는 맨 앞 구간(블로그 시작 이전 등)은 중립값 0.0으로 채운다.
+        self.macro_enabled = macro_series is not None
+        if self.macro_enabled:
+            aligned = macro_series.reindex(feature_df.index).ffill().fillna(0.0)
+            self._macro_values = aligned.values.astype(np.float32)
+        else:
+            self._macro_values = None
+
+        obs_dim = (
+            self.window * self.n_assets * self.n_features
+            + (self.window if self.macro_enabled else 0)
+            + (self.n_assets + 1)
+        )
         self.observation_space = spaces.Box(
             low=-np.inf, high=np.inf, shape=(obs_dim,), dtype=np.float32
         )
@@ -76,7 +92,11 @@ class PortfolioEnv(gym.Env):
 
     def _get_obs(self) -> np.ndarray:
         window_slice = self._feature_values[self._step_idx - self.window : self._step_idx]
-        return np.concatenate([window_slice.reshape(-1), self._weights]).astype(np.float32)
+        parts = [window_slice.reshape(-1)]
+        if self.macro_enabled:
+            parts.append(self._macro_values[self._step_idx - self.window : self._step_idx])
+        parts.append(self._weights)
+        return np.concatenate(parts).astype(np.float32)
 
     def reset(self, *, seed: Optional[int] = None, options: Optional[dict] = None):
         super().reset(seed=seed)

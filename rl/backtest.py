@@ -8,15 +8,26 @@
 import json
 import os
 from datetime import date
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
 from stable_baselines3 import PPO
 
 import config
+from rl import macro_blog
 from rl.price_data import load_dataset
 from rl.trading_env import PortfolioEnv
+
+
+def macro_series_for(meta: Dict) -> Optional[pd.Series]:
+    """meta["macro_enabled"]인 모델에 한해, 저장소(rl/macro_daily_scores.json)에
+    있는 매크로 시그널을 학습 때와 같은 방식으로 돌려준다. 여기서는 크롤링을
+    새로 하지 않는다(10시 launchd 잡 전담) - 홀드아웃/드리프트 점검이 네트워크에
+    의존하지 않도록."""
+    if not meta.get("macro_enabled"):
+        return None
+    return macro_blog.get_macro_series(start_date=meta["train_start"], backfill_missing=False)
 
 
 def _meta_path(model_path: str) -> str:
@@ -51,11 +62,11 @@ def compute_metrics(values: np.ndarray, periods_per_year: int = 252) -> Dict[str
     }
 
 
-def _run_policy(model, feature_df, close_df, tickers, window, transaction_cost_bps):
+def _run_policy(model, feature_df, close_df, tickers, window, transaction_cost_bps, macro_series=None):
     episode_length = len(feature_df) - window - 1
     env = PortfolioEnv(
         feature_df, close_df, tickers, window=window, episode_length=episode_length,
-        transaction_cost_bps=transaction_cost_bps, random_start=False,
+        transaction_cost_bps=transaction_cost_bps, random_start=False, macro_series=macro_series,
     )
     obs, _ = env.reset()
     values = [1.0]
@@ -77,12 +88,14 @@ def _equal_weight_baseline(close_df, tickers, window, n_steps):
     return normalized.mean(axis=1).values
 
 
-def run_backtest(model, feature_df, close_df, tickers, window, transaction_cost_bps=10.0) -> Dict:
+def run_backtest(model, feature_df, close_df, tickers, window, transaction_cost_bps=10.0, macro_series=None) -> Dict:
     """
     RL 정책과 두 베이스라인(동일가중 buy&hold, 현금)의 자산곡선·성과지표를 반환한다.
-    daily_run.py의 드리프트 점검에서도 이 함수를 재사용한다.
+    daily_run.py의 드리프트 점검에서도 이 함수를 재사용한다. macro_series는
+    학습 시 macro_enabled였던 모델이면 필수 - 관측 차원이 학습 때와 달라지면
+    model.predict()가 shape 불일치로 실패한다.
     """
-    rl_values, dates = _run_policy(model, feature_df, close_df, tickers, window, transaction_cost_bps)
+    rl_values, dates = _run_policy(model, feature_df, close_df, tickers, window, transaction_cost_bps, macro_series)
     bh_values = _equal_weight_baseline(close_df, tickers, window, len(rl_values))
     cash_values = np.ones(len(rl_values))
 
@@ -122,7 +135,10 @@ def main(model_path: str = None) -> Dict:
 
     print(f"[2/3] 보류 구간 백테스트 실행 중... (split_date={meta['split_date']} 이후)")
     feature_df, close_df = load_holdout(meta)
-    result = run_backtest(model, feature_df, close_df, meta["tickers"], meta["window"], meta["transaction_cost_bps"])
+    result = run_backtest(
+        model, feature_df, close_df, meta["tickers"], meta["window"], meta["transaction_cost_bps"],
+        macro_series=macro_series_for(meta),
+    )
 
     for name, label in [("rl", "RL 포트폴리오"), ("buy_and_hold", "동일가중 Buy&Hold"), ("cash", "현금")]:
         m = result[name]["metrics"]

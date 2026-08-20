@@ -125,6 +125,29 @@ def get_sellable_quantity(client: TossClient, symbol: str) -> Dict:
     )
 
 
+def extract_value(response: Dict, candidate_keys: list) -> Optional[float]:
+    """
+    실계좌 검증 완료(2026-08-17): 응답 본문은 {"result": {...}}로 감싸져 있고
+    수치는 문자열이다. result 안쪽을 먼저 보고, float()가 문자열도 처리한다.
+    """
+    if isinstance(response.get("result"), dict):
+        response = response["result"]
+    for key in candidate_keys:
+        if key in response and response[key] is not None:
+            return float(response[key])
+    return None
+
+
+def holdings_items(client: TossClient) -> list:
+    """실계좌 검증 완료(2026-08-17): 보유종목 리스트는 result.items에 있다."""
+    holdings = get_holdings(client)
+    if not isinstance(holdings, dict):
+        return []
+    result = holdings.get("result", holdings)
+    items = result.get("items") if isinstance(result, dict) else None
+    return items if isinstance(items, list) else []
+
+
 # ---------------------------------------------------------------------------
 # 주문 생성/조회/취소/정정
 # ---------------------------------------------------------------------------
