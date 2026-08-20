@@ -120,7 +120,7 @@ def run(
     # 기록의 목표 비중)를 관측에 넣어 학습 시 환경과 같은 방식으로 상태가
     # 이어지게 한다. 실거래 전환 후에는 실계좌 상태가 그대로 유효하다.
     history = daily_log.load_history()
-    prior_value, prior_weights = paper_trading.load_prior_state(history, tickers)
+    prior_value, prior_weights = paper_trading.load_prior_state(history, tickers, initial_capital=cash)
     obs_current_weights = (
         real_current_weights if config.TOSS_LIVE_TRADING else prior_weights.astype(np.float32)
     )

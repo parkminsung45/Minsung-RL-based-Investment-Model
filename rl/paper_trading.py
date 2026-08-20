@@ -12,6 +12,12 @@ daily_run_history.json의 가치가 매일 같은 숫자로 고정됐다(일간 
 (가치 *= 1 + 목표비중·자산수익률 - 회전율*거래비용)으로 오늘의 가치를 굴린다.
 실거래 주문 계산(diff_value 등)은 여전히 실계좌 잔고를 기준으로 하므로
 실거래 전환 시 그대로 유효하다 - 이 모듈은 로깅/대시보드용 가치만 대체한다.
+
+기록이 아예 없는 최초 실행의 시작 자본은 실계좌 buying power를 그대로
+가져온다(rl_strategy.run()이 이미 주문 계산을 위해 조회하는 값을 재사용) -
+페이퍼 시뮬레이션이라도 "얼마부터 굴리는지"는 실제 계좌 규모를 반영하도록.
+그 이후로는 매일 시뮬레이션된 가치가 이어지고, 실계좌 잔고를 다시 읽어오지
+않는다(그러면 매일 리셋되어 버림).
 """
 from typing import Dict, List, Optional, Tuple
 
@@ -20,12 +26,17 @@ import numpy as np
 import config
 
 
-def load_prior_state(history: List[Dict], tickers: List[str]) -> Tuple[float, np.ndarray]:
+def load_prior_state(
+    history: List[Dict], tickers: List[str], initial_capital: Optional[float] = None
+) -> Tuple[float, np.ndarray]:
     """직전 기록에서 (포트폴리오 가치, [종목별 비중..., 현금비중]) 을 복원한다.
-    기록이 없으면 RL_PAPER_INITIAL_CAPITAL 전액 현금에서 새로 시작한다."""
+    기록이 없으면 전액 현금에서 새로 시작한다 - 시작 자본은 initial_capital로
+    호출측(rl_strategy.run())이 실계좌 buying power를 넘기고, 계좌 조회가
+    안 되거나 0 이하면 RL_PAPER_INITIAL_CAPITAL로 대체한다."""
     if not history:
         weights = np.array([0.0] * len(tickers) + [1.0], dtype=np.float64)
-        return config.RL_PAPER_INITIAL_CAPITAL, weights
+        capital = initial_capital if initial_capital and initial_capital > 0 else config.RL_PAPER_INITIAL_CAPITAL
+        return capital, weights
 
     last = history[-1]
     weights = np.array(
