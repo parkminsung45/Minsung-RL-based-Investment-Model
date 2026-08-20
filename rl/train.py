@@ -61,7 +61,9 @@ def run(timesteps: int, model_path: str = None) -> None:
     # RL 학습 종목 유니버스는 config.WATCHLIST(main.py 뉴스+애널리스트 파이프라인용
     # 소수 관심종목, Alpha Vantage 무료 티어 제약)와 별개로 S&P 500 전체를 쓴다 -
     # data_pipeline.get_sp500_tickers()가 실시간 조회(실패 시 로컬 캐시)로 가져온다.
-    candidates = data_pipeline.get_sp500_tickers()
+    # stockanalysis.com 표는 BRK.B처럼 점(.) 표기를 쓰는데 yfinance는 하이픈
+    # (BRK-B)을 기대하므로 다운로드 전에 변환한다.
+    candidates = [t.replace(".", "-") for t in data_pipeline.get_sp500_tickers()]
     start = (date.today() - timedelta(days=int(365.25 * config.RL_TRAIN_YEARS))).isoformat()
     print(f"[1/3] 가격 데이터 로드 중... S&P500 후보 {len(candidates)}개, 시작일: {start}")
     tickers, feature_df, close_df = load_dataset_filtered(candidates, start=start)

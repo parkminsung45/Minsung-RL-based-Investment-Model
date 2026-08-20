@@ -9,6 +9,7 @@ import hashlib
 import os
 from typing import List, Optional, Tuple
 
+import numpy as np
 import pandas as pd
 import yfinance as yf
 
@@ -64,7 +65,7 @@ def _rsi(close: pd.Series, window: int = 14) -> pd.Series:
     delta = close.diff()
     gain = delta.clip(lower=0).rolling(window).mean()
     loss = (-delta.clip(upper=0)).rolling(window).mean()
-    rs = gain / loss.replace(0, pd.NA)
+    rs = gain / loss.replace(0, np.nan)
     rsi = 100 - (100 / (1 + rs))
     return rsi.astype(float).fillna(50.0)  # 데이터 부족/무변동 구간은 중립값(50)
 
@@ -90,7 +91,7 @@ def compute_features(price_df: pd.DataFrame, tickers: List[str]) -> pd.DataFrame
             "ma60_return": daily_return.rolling(60).mean(),
             "volatility_20d": daily_return.rolling(20).std(),
             "rsi_14": _rsi(close, 14),
-            "volume_zscore_20d": (volume - volume_mean) / volume_std.replace(0, pd.NA),
+            "volume_zscore_20d": (volume - volume_mean) / volume_std.replace(0, np.nan),
         })
 
     combined = pd.concat(feature_frames, axis=1)
