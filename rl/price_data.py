@@ -111,3 +111,36 @@ def load_dataset(
     close_df = pd.DataFrame({ticker: price_df[(ticker, "Close")] for ticker in tickers})
     close_df = close_df.loc[feature_df.index]
     return feature_df, close_df
+
+
+def load_dataset_filtered(
+    tickers: List[str], start: str, end: Optional[str] = None, use_cache: bool = True,
+    min_coverage: float = 0.98,
+) -> Tuple[List[str], pd.DataFrame, pd.DataFrame]:
+    """
+    S&P 500 같은 큰 유니버스로 학습할 때 쓰는 진입점. compute_features()의
+    dropna(how="any")는 한 종목이라도 구간 일부에 결측(최근 상장·조회 실패 등)이
+    있으면 그 날짜 전체가 통째로 사라진다 - 500종목 중 하나만 상장 이력이
+    짧아도 전체 학습 구간이 초토화될 수 있다. 그래서 종목별 종가 결측 비율을
+    먼저 확인해, 구간 전체를 min_coverage 이상 커버하는 종목만 남긴 뒤
+    feature_df/close_df를 만든다.
+    반환: (실제로 쓰인 티커 리스트, feature_df, close_df).
+    """
+    price_df = fetch_price_history(tickers, start, end, use_cache=use_cache)
+    total_days = len(price_df)
+    kept, dropped = [], []
+    for ticker in tickers:
+        try:
+            coverage = price_df[(ticker, "Close")].notna().sum() / total_days if total_days else 0.0
+        except KeyError:
+            coverage = 0.0
+        (kept if coverage >= min_coverage else dropped).append(ticker)
+
+    if dropped:
+        preview = ", ".join(dropped[:15]) + (" ..." if len(dropped) > 15 else "")
+        print(f"[price_data] 상장 이력 부족/조회 실패로 제외된 종목 {len(dropped)}개: {preview}")
+
+    feature_df = compute_features(price_df, kept)
+    close_df = pd.DataFrame({ticker: price_df[(ticker, "Close")] for ticker in kept})
+    close_df = close_df.loc[feature_df.index]
+    return kept, feature_df, close_df

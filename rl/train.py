@@ -18,7 +18,8 @@ from stable_baselines3 import PPO
 from stable_baselines3.common.monitor import Monitor
 
 import config
-from rl.price_data import load_dataset
+import data_pipeline
+from rl.price_data import load_dataset_filtered
 from rl.trading_env import PortfolioEnv
 
 
@@ -42,11 +43,11 @@ def split_dataset(feature_df, close_df, window: int, split_ratio: float):
     return train_feature_df, train_close_df, holdout_feature_df, holdout_close_df
 
 
-def build_env(feature_df, close_df, random_start: bool) -> PortfolioEnv:
+def build_env(feature_df, close_df, tickers: list, random_start: bool) -> PortfolioEnv:
     return PortfolioEnv(
         feature_df,
         close_df,
-        tickers=config.WATCHLIST,
+        tickers=tickers,
         window=config.RL_LOOKBACK_WINDOW_DAYS,
         episode_length=config.RL_EPISODE_LENGTH_DAYS,
         transaction_cost_bps=config.RL_TRANSACTION_COST_BPS,
@@ -56,12 +57,18 @@ def build_env(feature_df, close_df, random_start: bool) -> PortfolioEnv:
 
 def run(timesteps: int, model_path: str = None) -> None:
     model_path = model_path or config.RL_MODEL_PATH
-    tickers = config.WATCHLIST
 
+    # RL 학습 종목 유니버스는 config.WATCHLIST(main.py 뉴스+애널리스트 파이프라인용
+    # 소수 관심종목, Alpha Vantage 무료 티어 제약)와 별개로 S&P 500 전체를 쓴다 -
+    # data_pipeline.get_sp500_tickers()가 실시간 조회(실패 시 로컬 캐시)로 가져온다.
+    candidates = data_pipeline.get_sp500_tickers()
     start = (date.today() - timedelta(days=int(365.25 * config.RL_TRAIN_YEARS))).isoformat()
-    print(f"[1/3] 가격 데이터 로드 중... 대상: {tickers}, 시작일: {start}")
-    feature_df, close_df = load_dataset(tickers, start=start)
-    print(f"      {len(feature_df)}개 거래일 로드 완료 ({feature_df.index[0].date()} ~ {feature_df.index[-1].date()})")
+    print(f"[1/3] 가격 데이터 로드 중... S&P500 후보 {len(candidates)}개, 시작일: {start}")
+    tickers, feature_df, close_df = load_dataset_filtered(candidates, start=start)
+    print(
+        f"      학습 기간({config.RL_TRAIN_YEARS}년) 전체 데이터가 있는 {len(tickers)}개 종목 사용, "
+        f"{len(feature_df)}개 거래일 로드 완료 ({feature_df.index[0].date()} ~ {feature_df.index[-1].date()})"
+    )
 
     train_feature_df, train_close_df, holdout_feature_df, holdout_close_df = split_dataset(
         feature_df, close_df, config.RL_LOOKBACK_WINDOW_DAYS, config.RL_TRAIN_TEST_SPLIT
@@ -69,7 +76,7 @@ def run(timesteps: int, model_path: str = None) -> None:
     print(f"      학습 {len(train_feature_df)}일 / 보류(holdout) {len(holdout_feature_df)}일")
 
     print(f"[2/3] PPO 학습 중... timesteps={timesteps}")
-    env = Monitor(build_env(train_feature_df, train_close_df, random_start=True))
+    env = Monitor(build_env(train_feature_df, train_close_df, tickers, random_start=True))
     model = PPO("MlpPolicy", env, verbose=1)
     model.learn(total_timesteps=timesteps)
 

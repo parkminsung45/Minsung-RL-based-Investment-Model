@@ -14,10 +14,12 @@ from datetime import date, timedelta
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
+import pandas as pd
 from stable_baselines3 import PPO
 
 import broker
 import config
+from rl import daily_log, paper_trading
 from rl.price_data import load_dataset
 from rl.trading_env import PortfolioEnv
 from strategy import _extract_value
@@ -110,9 +112,20 @@ def run(
     latest_close = {t: float(close_df[t].iloc[-1]) for t in tickers}
     qty_by_symbol = _holdings_by_symbol(client)
     cash = _extract_value(broker.get_buying_power(client, currency="USD"), ["cashBuyingPower"]) or 0.0
-    current_weights = _current_weights(qty_by_symbol, latest_close, cash, tickers)
+    real_current_weights = _current_weights(qty_by_symbol, latest_close, cash, tickers)
 
-    obs = _build_observation(feature_df, tickers, window, current_weights)
+    # 드라이런에서는 실계좌가 절대 바뀌지 않아 real_current_weights가 매일
+    # "전액 현금"으로 고정된다 - 모델이 매번 같은 시작 상태를 관측해 학습 때와
+    # 달리 포지션이 이어지지 않는 원인이었다. 대신 페이퍼 포트폴리오(직전
+    # 기록의 목표 비중)를 관측에 넣어 학습 시 환경과 같은 방식으로 상태가
+    # 이어지게 한다. 실거래 전환 후에는 실계좌 상태가 그대로 유효하다.
+    history = daily_log.load_history()
+    prior_value, prior_weights = paper_trading.load_prior_state(history, tickers)
+    obs_current_weights = (
+        real_current_weights if config.TOSS_LIVE_TRADING else prior_weights.astype(np.float32)
+    )
+
+    obs = _build_observation(feature_df, tickers, window, obs_current_weights)
     action, _ = model.predict(obs, deterministic=True)
     target_weights = PortfolioEnv._softmax(action)
 
@@ -152,6 +165,22 @@ def run(
 
     snapshot_weights = {ticker: float(target_weights[i]) for i, ticker in enumerate(tickers)}
     snapshot_weights["CASH"] = float(target_weights[-1])
-    snapshot = {"portfolio_value": total_value, "weights": snapshot_weights}
+
+    if config.TOSS_LIVE_TRADING:
+        portfolio_value = total_value
+    else:
+        prior_date = history[-1]["date"] if history else None
+        prior_close = None
+        if prior_date is not None:
+            prior_ts = pd.Timestamp(prior_date)
+            if prior_ts in close_df.index:
+                prior_close = close_df.loc[prior_ts, tickers].astype(float).values
+        today_close = close_df[tickers].iloc[-1].astype(float).values
+        portfolio_value = paper_trading.step(
+            prior_value, prior_weights, target_weights.astype(np.float64),
+            prior_close, today_close, meta.get("transaction_cost_bps", config.RL_TRANSACTION_COST_BPS),
+        )
+
+    snapshot = {"portfolio_value": portfolio_value, "weights": snapshot_weights}
 
     return results, snapshot

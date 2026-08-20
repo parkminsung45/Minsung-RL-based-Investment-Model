@@ -69,3 +69,6 @@ RL_REBALANCE_MIN_TRADE_USD = 5.0
 # daily_run.py 드리프트 점검: 보류 구간 백테스트 최대낙폭(MDD)이 이 값을
 # 넘으면 이상 상황으로 보고 리밸런싱 없이 종료한다.
 RL_DRIFT_MAX_DRAWDOWN = 0.35
+# 드라이런(TOSS_LIVE_TRADING=false) 동안 rl/paper_trading.py가 굴리는 가상
+# 포트폴리오의 시작 자본(달러). 실계좌와 무관 - 대시보드용 시뮬레이션 값이다.
+RL_PAPER_INITIAL_CAPITAL = 10_000.0
