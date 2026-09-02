@@ -41,6 +41,13 @@ def fetch_access_token(client_id: str, client_secret: str) -> Dict:
         },
         timeout=15,
     )
+    if resp.status_code == 403 and "ip" in resp.text.lower():
+        raise RuntimeError(
+            "토스증권 API가 현재 공인 IP를 거부했습니다 (IP address not allowed). "
+            "토스증권 앱/WTS > 설정 > Open API > 허용 IP 관리에서 현재 공인 IP를 "
+            "등록했는지 확인하세요 (유동 IP 회선이면 IP가 바뀌었을 수 있습니다). "
+            f"원본 응답: {resp.text}"
+        )
     resp.raise_for_status()
     data = resp.json()
     return {
